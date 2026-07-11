@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Request, Response
 
@@ -145,16 +145,23 @@ async def _rss_mode(
     for c in candidates:
         entry = FeedEntry(c)
         if index is not None:
+            # Score ALL candidate scenes and rewrite to the BEST (highest-
+            # confidence) scene at or above threshold, not the first one that
+            # clears it (candidates come back ascending by scene_id).
+            best_scene: SceneFingerprint | None = None
+            best_conf = -1
             for scene in index.candidates_for_title(c.title):
                 s = score(scene, c.title, other_sites=index.other_sites_for(scene))
-                if s.confidence >= state.config.matching.threshold:
-                    entry = FeedEntry(c, title_override=rewrite_title(scene, c.title))
-                    rewritten += 1
-                    log.info(
-                        "rss slug=%s matched scene=%d conf=%d original=%r",
-                        indexer.slug, scene.scene_id, s.confidence, c.title,
-                    )
-                    break
+                if s.confidence >= state.config.matching.threshold and s.confidence > best_conf:
+                    best_conf = s.confidence
+                    best_scene = scene
+            if best_scene is not None:
+                entry = FeedEntry(c, title_override=rewrite_title(best_scene, c.title))
+                rewritten += 1
+                log.info(
+                    "rss slug=%s matched scene=%d conf=%d original=%r",
+                    indexer.slug, best_scene.scene_id, best_conf, c.title,
+                )
         entries.append(entry)
     log.info("rss slug=%s items=%d rewritten=%d", indexer.slug, len(candidates), rewritten)
     return _xml(build_feed(entries))

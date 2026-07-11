@@ -16,8 +16,11 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   ONeil, Mary-Jane -> MaryJane) still match; ultra-short single-token names
   are ignored.
 - Title counts as a STRONG signal only for a distinctive (>= 2 content token)
-  title whose tokens are all present in the candidate — a generic one-word
-  title cannot become a second strong signal by mere containment.
+  title whose tokens are all present in the candidate AND only alongside a site
+  or performer strong signal — a generic one-word title cannot become a second
+  strong signal by mere containment, and a distinctive title never pairs with
+  date alone to clear the threshold (a near-exact title with no site/performer
+  still contributes up to TITLE_MAX medium points but is not a strong signal).
 """
 from __future__ import annotations
 
@@ -39,7 +42,9 @@ SINGLE_SIGNAL_CAP = 65
 _TITLE_RATIO_GATE = 60
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
 _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a strong signal
-_MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram
+_MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram;
+#                               wanted_index._MAX_NAME_TOKENS must stay >= this or the
+#                               RSS pre-filter stops being a lossless superset.
 
 
 @dataclass(frozen=True)
@@ -136,7 +141,11 @@ def score(
         near_exact = len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS and all(
             t in cand_ctok_set for t in scene_ctoks
         )
-        if near_exact:
+        # Title is strong ONLY alongside a site or performer strong signal (the
+        # site/performer blocks run before this one, so `strong` is populated).
+        # This encodes the design's valid strong-pairs (date+performer, site+date,
+        # site+performer, site+title): title must never pair with date alone.
+        if near_exact and ("site" in strong or "performer" in strong):
             strong.append("title")
             detail["title"] = STRONG_TITLE
         else:

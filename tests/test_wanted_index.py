@@ -92,3 +92,42 @@ def test_site_name_indexed_for_token_lookup():
     idx = WantedIndex([scene])
     # a release naming only the site (glued) shares the squashed site n-gram
     assert scene in idx.candidates_for_title("ExampleSite.Random.Clip.Name")
+
+
+def test_date_hits_survive_token_only_truncation(caplog):
+    from scenehound.wanted_index import _MAX_CANDIDATES
+
+    # One more than the cap of scenes that share a common title token but are on
+    # an unrelated date -> these are token-only hits and get truncated.
+    token_scenes = [
+        SceneFingerprint(i, f"Site{i}", (), date(2020, 1, 1), "Common Word Here", ())
+        for i in range(1, _MAX_CANDIDATES + 2)
+    ]
+    # Two scenes on the release date whose titles share NO token with it: pure
+    # date-bucket hits that must always be returned.
+    date_scenes = [
+        SceneFingerprint(90001, "DateSiteA", (), date(2030, 1, 1), "Distinct Alpha", ()),
+        SceneFingerprint(90002, "DateSiteB", (), date(2030, 1, 1), "Distinct Beta", ()),
+    ]
+    idx = WantedIndex(token_scenes + date_scenes)
+    title = "SomeRelease.2030-01-01.Common.Word.Here.1080p"
+    with caplog.at_level("WARNING"):
+        cands = idx.candidates_for_title(title)
+    ids = {s.scene_id for s in cands}
+    # both date-bucket hits survive regardless of token-only truncation
+    assert 90001 in ids and 90002 in ids
+    # token-only hits are bounded exactly at the cap
+    token_only = [s for s in cands if s.scene_id not in (90001, 90002)]
+    assert len(token_only) == _MAX_CANDIDATES
+    # truncation is never silent
+    assert "truncated token-only hits" in caplog.text
+
+
+def test_ngram_window_couples_index_and_matcher():
+    # Losslessness silently depends on the index indexing name n-grams at least
+    # as long as the matcher compares against. If this ever fails, the RSS
+    # pre-filter's superset guarantee breaks (real matches get dropped).
+    from scenehound.matcher import _MAX_SITE_TOKENS
+    from scenehound.wanted_index import _MAX_NAME_TOKENS
+
+    assert _MAX_NAME_TOKENS >= _MAX_SITE_TOKENS

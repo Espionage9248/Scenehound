@@ -167,3 +167,25 @@ def test_short_performer_still_rejected_after_ngram_change():
     s = score(scene, "SomeOtherStudio.2026.07.07.Maintenance.Training.Bonus.1080p")
     assert "performer" not in s.strong_signals
     assert s.confidence < 75
+
+
+def test_date_plus_generic_title_only_does_not_match():
+    # Title is near-exact but neither site nor performer is present, so title
+    # must NOT count as a strong signal — date alone is capped below threshold.
+    scene = SceneFingerprint(26, "That Fetish Girl", (), date(2026, 7, 7),
+                             "Casting Couch", ())
+    s = score(scene, "BangBros.2026-07-07.Casting.Couch.1080p")
+    assert "title" not in s.strong_signals
+    assert s.strong_signals == ("date",)
+    assert s.confidence < 75
+    assert s.confidence <= SINGLE_SIGNAL_CAP
+
+
+def test_site_plus_date_without_title_overlap_still_matches():
+    # Two strong signals (site + date), no title-word overlap — unchanged 75.
+    scene = SceneFingerprint(27, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                             "Latex Worship Session", ())
+    s = score(scene, "ThatFetishGirl.2026-07-07.Unrelated.Clip.Name.1080p")
+    assert {"date", "site"} <= set(s.strong_signals)
+    assert "title" not in s.strong_signals
+    assert s.confidence >= 75

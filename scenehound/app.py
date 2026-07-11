@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -78,6 +79,8 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 yield
             finally:
                 task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     app = FastAPI(lifespan=lifespan)
     app.include_router(router)

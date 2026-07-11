@@ -3,7 +3,6 @@ from datetime import date
 from pathlib import Path
 
 import httpx
-import pytest
 
 from scenehound.clients.whisparr import WhisparrClient, scene_from_record
 
@@ -34,6 +33,17 @@ def test_scene_from_record_rejects_incomplete():
 def test_scene_from_record_multiple_performers():
     rec = {**SAMPLE, "performerNames": ["Anna Example", "Bella Example"]}
     assert scene_from_record(rec).performers == ("Anna Example", "Bella Example")
+
+
+def test_scene_from_record_bare_string_performer_names_ignored():
+    # A bare string (not a list) must not be iterated into single-char
+    # "performers"; site/date/title still map normally.
+    rec = {**SAMPLE, "performerNames": "JaneDoe"}
+    s = scene_from_record(rec)
+    assert s.performers == ()
+    assert s.site == "Fitting-Room"
+    assert s.date == date(2025, 3, 17)
+    assert s.title == "Zuzu Sweet | Fatal Temptaion"
 
 
 def test_real_fixture_records_map():

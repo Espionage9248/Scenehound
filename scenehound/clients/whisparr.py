@@ -32,9 +32,12 @@ def scene_from_record(record: dict) -> SceneFingerprint | None:
         parsed = date.fromisoformat(str(raw_date)[:10])
     except ValueError:
         return None
-    performers = tuple(
-        p for p in (record.get("performerNames") or ()) if isinstance(p, str) and p
-    )
+    names = record.get("performerNames")
+    if not isinstance(names, list):
+        # A bare string is iterable but must not be split into single-char
+        # "performers"; anything that is not a list is treated as absent.
+        names = ()
+    performers = tuple(p for p in names if isinstance(p, str) and p)
     return SceneFingerprint(
         scene_id=int(record.get("id", 0)),
         site=site,

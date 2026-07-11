@@ -11,6 +11,7 @@ would match on a site or performer name (including pure-digit/junk or glued
 renderings that content_tokens strips)."""
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import Iterable, Sequence
@@ -19,7 +20,15 @@ from scenehound.dates import extract_dates
 from scenehound.models import SceneFingerprint
 from scenehound.normalize import content_tokens, squash, tokenize
 
-_MAX_CANDIDATES = 200
+log = logging.getLogger("scenehound.wanted_index")
+
+# Bounds only the token-ONLY hits (date-bucket hits are never truncated). Raised
+# from 200 so a common title token rarely truncates real matches; truncation is
+# logged, never silent.
+_MAX_CANDIDATES = 1000
+# Must stay >= matcher._MAX_SITE_TOKENS (6): the RSS pre-filter's superset/
+# losslessness guarantee breaks if the index indexes shorter name n-grams than
+# the matcher compares against. See matcher._MAX_SITE_TOKENS.
 _MAX_NAME_TOKENS = 6
 
 
@@ -77,16 +86,29 @@ class WantedIndex:
         return tuple(sorted(out, key=lambda s: s.scene_id))
 
     def candidates_for_title(self, title: str) -> tuple[SceneFingerprint, ...]:
-        hits: dict[int, SceneFingerprint] = {}
+        # Date-bucket hits are the strongest discriminator and always small;
+        # retain them UNCONDITIONALLY (never truncated). Only token-only hits
+        # (scenes hit by a token but not already in a date bucket) are bounded.
+        date_hits: dict[int, SceneFingerprint] = {}
         for d in extract_dates(title):
             for delta in (-1, 0, 1):
                 for s in self._by_date.get(d + timedelta(days=delta), []):
-                    hits[s.scene_id] = s
+                    date_hits[s.scene_id] = s
+        token_hits: dict[int, SceneFingerprint] = {}
         for tok in set(content_tokens(title)) | _squashed_ngrams(title):
             for s in self._by_token.get(tok, []):
-                hits[s.scene_id] = s
-        out = sorted(hits.values(), key=lambda s: s.scene_id)
-        return tuple(out[:_MAX_CANDIDATES])
+                if s.scene_id not in date_hits:
+                    token_hits[s.scene_id] = s
+        token_only = sorted(token_hits.values(), key=lambda s: s.scene_id)
+        if len(token_only) > _MAX_CANDIDATES:
+            log.warning(
+                "candidates_for_title truncated token-only hits: dropped=%d "
+                "kept=%d title=%r",
+                len(token_only) - _MAX_CANDIDATES, _MAX_CANDIDATES, title,
+            )
+            token_only = token_only[:_MAX_CANDIDATES]
+        date_sorted = sorted(date_hits.values(), key=lambda s: s.scene_id)
+        return tuple(date_sorted + token_only)
 
     def other_sites_for(self, scene: SceneFingerprint) -> frozenset[str]:
         own = {squash(n) for n in (scene.site, *scene.site_aliases)}
