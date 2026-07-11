@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#4F46E5"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+
+  <g>
+    <!-- ears (behind head) -->
+    <path d="M316 178 C 366 140 440 162 432 242 C 426 312 398 362 348 380
+             C 326 388 306 382 302 360 C 296 304 298 226 316 178 Z" fill="#DDD6FE"/>
+    <path d="M196 178 C 146 140 72 162 80 242 C 86 312 114 362 164 380
+             C 186 388 206 382 210 360 C 216 304 214 226 196 178 Z" fill="#DDD6FE"/>
+    <!-- inner-ear shading -->
+    <path d="M330 196 C 366 172 410 188 405 244 C 401 296 382 332 350 348
+             C 336 354 324 350 322 334 C 318 292 320 232 330 196 Z" fill="#C4B5FD"/>
+    <path d="M182 196 C 146 172 102 188 107 244 C 111 296 130 332 162 348
+             C 176 354 188 350 190 334 C 194 292 192 232 182 196 Z" fill="#C4B5FD"/>
+
+    <!-- head + muzzle silhouette -->
+    <path d="M256 140
+             C 203 140 170 186 170 236
+             C 170 286 196 300 214 316
+             C 214 316 213 352 224 368
+             C 236 386 276 386 288 368
+             C 299 352 298 316 298 316
+             C 316 300 342 286 342 236
+             C 342 186 309 140 256 140 Z" fill="#FBF7EC"/>
+
+    <!-- brows -->
+    <path d="M196 226 C 206 216 224 214 234 222" fill="none" stroke="#E7DFC9" stroke-width="7" stroke-linecap="round"/>
+    <path d="M316 226 C 306 216 288 214 278 222" fill="none" stroke="#E7DFC9" stroke-width="7" stroke-linecap="round"/>
+    <!-- eyes -->
+    <ellipse cx="215" cy="250" rx="15" ry="18" fill="#312E81"/>
+    <ellipse cx="297" cy="250" rx="15" ry="18" fill="#312E81"/>
+    <!-- nose -->
+    <ellipse cx="256" cy="340" rx="23" ry="17" fill="#312E81"/>
+    <path d="M256 357 C 256 370 238 374 230 366" fill="none" stroke="#312E81" stroke-width="6" stroke-linecap="round"/>
+    <path d="M256 357 C 256 370 274 374 282 366" fill="none" stroke="#312E81" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <!-- search/match badge -->
+  <g>
+    <circle cx="398" cy="404" r="70" fill="#FBBF24"/>
+    <circle cx="398" cy="404" r="70" fill="none" stroke="#4F46E5" stroke-width="0"/>
+    <circle cx="388" cy="394" r="27" fill="none" stroke="#3B0764" stroke-width="12"/>
+    <line x1="408" y1="414" x2="428" y2="434" stroke="#3B0764" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>
