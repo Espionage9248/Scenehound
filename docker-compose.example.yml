@@ -1,0 +1,15 @@
+services:
+  scenehound:
+    image: scenehound:latest
+    build: .
+    container_name: scenehound
+    ports:
+      - "9797:9797"
+    volumes:
+      - ./config:/config
+    environment:
+      - WHISPARR_URL=http://whisparr:6969
+      - WHISPARR_API_KEY=changeme
+      - PROWLARR_URL=http://prowlarr:9696
+      - PROWLARR_API_KEY=changeme
+    restart: unless-stopped
