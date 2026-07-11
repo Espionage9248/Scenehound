@@ -2,7 +2,13 @@
 
 Pre-filtering is lossless by construction: a match requires two strong
 signals, so any (release, scene) pair sharing neither a date bucket nor a
-content token can never clear the threshold and is safe to skip."""
+content token can never clear the threshold and is safe to skip. To stay
+lossless against the matcher's name signals, the token index also covers the
+squashed site/alias/performer names of each scene, and the lookup covers the
+release's squashed boundary n-grams; so the pre-filter's key set is a superset
+of the matcher's name-signal vocabulary and never drops a scene the matcher
+would match on a site or performer name (including pure-digit/junk or glued
+renderings that content_tokens strips)."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -11,9 +17,25 @@ from typing import Iterable, Sequence
 
 from scenehound.dates import extract_dates
 from scenehound.models import SceneFingerprint
-from scenehound.normalize import content_tokens, squash
+from scenehound.normalize import content_tokens, squash, tokenize
 
 _MAX_CANDIDATES = 200
+_MAX_NAME_TOKENS = 6
+
+
+def _squashed_ngrams(text: str) -> set[str]:
+    """Squashed concatenations of every contiguous run of up to _MAX_NAME_TOKENS
+    tokens — the same boundary-aligned form the matcher compares squashed site
+    and performer names against. Ensures the index's key vocabulary is a
+    superset of the matcher's name-signal vocabulary (losslessness)."""
+    toks = tokenize(text)
+    grams: set[str] = set()
+    for i in range(len(toks)):
+        acc = ""
+        for j in range(i, min(i + _MAX_NAME_TOKENS, len(toks))):
+            acc += toks[j]
+            grams.add(acc)
+    return grams
 
 
 class WantedIndex:
@@ -30,9 +52,12 @@ class WantedIndex:
                 if sq:
                     self._by_site[sq].append(s)
                     vocab.add(sq)
+            name_keys = {sq for name in (s.site, *s.site_aliases) if (sq := squash(name))}
+            name_keys.update(sq for p in s.performers if (sq := squash(p)))
             for tok in {
                 *content_tokens(s.title),
                 *(t for p in s.performers for t in content_tokens(p)),
+                *name_keys,
             }:
                 self._by_token[tok].append(s)
         self.site_vocab: frozenset[str] = frozenset(vocab)
@@ -57,7 +82,7 @@ class WantedIndex:
             for delta in (-1, 0, 1):
                 for s in self._by_date.get(d + timedelta(days=delta), []):
                     hits[s.scene_id] = s
-        for tok in content_tokens(title):
+        for tok in set(content_tokens(title)) | _squashed_ngrams(title):
             for s in self._by_token.get(tok, []):
                 hits[s.scene_id] = s
         out = sorted(hits.values(), key=lambda s: s.scene_id)

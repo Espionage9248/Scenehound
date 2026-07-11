@@ -1,5 +1,6 @@
 from datetime import date
 
+from scenehound.matcher import score
 from scenehound.models import SceneFingerprint
 from scenehound.wanted_index import WantedIndex
 
@@ -60,3 +61,34 @@ def test_site_vocab_and_other_sites():
 
 def test_len():
     assert len(make_index()) == 3
+
+
+def test_lossless_numeric_performer_name():
+    # performer name is a pure-digit token: content_tokens strips it, but the
+    # matcher still matches it via squash-in-ngrams. The pre-filter must include it.
+    from scenehound.matcher import score
+    scene = SceneFingerprint(50, "ExampleSite", (), date(2015, 1, 1),
+                             "Foo Bar Baz", ("2020", "2021"))
+    idx = WantedIndex([scene])
+    release = "ExampleSite.2020.2021.ClipName.Extra.Words.Here.1080p.mp4"
+    assert score(scene, release).confidence >= 75          # matcher WOULD match
+    assert scene in idx.candidates_for_title(release)      # so pre-filter must not drop it
+
+
+def test_lossless_site_plus_two_performers_no_date_no_title_overlap():
+    from scenehound.matcher import score
+    scene = SceneFingerprint(51, "ExampleSite", (), date(2015, 1, 1),
+                             "Unshared Title Words", ("Jane Doe", "Mary Major"))
+    idx = WantedIndex([scene])
+    # site + both performers present; no date, no title-word overlap
+    release = "ExampleSite.Jane.Doe.And.Mary.Major.ClipName.1080p"
+    assert score(scene, release).confidence >= 75
+    assert scene in idx.candidates_for_title(release)
+
+
+def test_site_name_indexed_for_token_lookup():
+    scene = SceneFingerprint(52, "ExampleSite", ("ExSite",), date(2015, 1, 1),
+                             "Some Scene", ("Jane Doe",))
+    idx = WantedIndex([scene])
+    # a release naming only the site (glued) shares the squashed site n-gram
+    assert scene in idx.candidates_for_title("ExampleSite.Random.Clip.Name")
