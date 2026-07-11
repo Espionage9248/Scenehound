@@ -59,6 +59,47 @@ def test_no_performers_no_performer_variant():
     )
 
 
+def test_site_aliases_produce_search_variants():
+    # An "…XXX"/non-"…XXX" studio must be searched in BOTH spellings, because the
+    # tracker only matches the literal title text. The alias appears in the same
+    # site-keyed slots as the primary site (site+title, site-alone), primary first.
+    scene = SceneFingerprint(
+        7, "Family Therapy XXX", ("Family Therapy",), date(2026, 7, 7),
+        "The Massage Lesson", ("Jane Doe",),
+    )
+    qs = plan_queries(scene, max_queries=99)
+    assert "Family Therapy" in qs                       # bare alias, site-alone
+    assert "Family Therapy the massage lesson" in qs     # alias + distinctive title words
+    # primary spelling still leads its alias in every shared slot
+    assert qs.index("Family Therapy XXX") < qs.index("Family Therapy")
+    assert (
+        qs.index("Family Therapy XXX the massage lesson")
+        < qs.index("Family Therapy the massage lesson")
+    )
+
+
+def test_alias_site_plus_title_reachable_in_default_budget():
+    # The default budget must still surface at least one alias-spelling variant so
+    # the toggled studio is actually searchable in practice, not only at max budget.
+    scene = SceneFingerprint(
+        8, "Family Therapy XXX", ("Family Therapy",), date(2026, 7, 7),
+        "The Massage Lesson", ("Jane Doe",),
+    )
+    qs = plan_queries(scene)  # default max_queries=5
+    assert any(q.startswith("Family Therapy ") and "XXX" not in q for q in qs)
+
+
+def test_no_aliases_query_shape_unchanged():
+    # Guard: a scene with no aliases keeps the exact prior variant shape/order.
+    scene = SceneFingerprint(3, "Foo", (), date(2026, 7, 7), "Bar Baz", ("Foo",))
+    assert plan_queries(scene) == (
+        "Foo 26.07.07",
+        "Foo",
+        "Foo bar baz",
+        "Foo 2026-07-07",
+    )
+
+
 def test_dedup_collapses_colliding_variants():
     # site == performers[0] makes the site+ISO / performer+ISO variants collide,
     # and the site+title / performer+title variants collide — exercising dedup.

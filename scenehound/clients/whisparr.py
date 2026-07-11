@@ -17,6 +17,7 @@ from datetime import date
 import httpx
 
 from scenehound.models import SceneFingerprint
+from scenehound.normalize import squash, xxx_site_variant
 
 log = logging.getLogger("scenehound.whisparr")
 _PAGE_SIZE = 1000
@@ -38,10 +39,17 @@ def scene_from_record(record: dict) -> SceneFingerprint | None:
         # "performers"; anything that is not a list is treated as absent.
         names = ()
     performers = tuple(p for p in names if isinstance(p, str) and p)
+    # A studio's "xxx" suffix is decorative and appears on only one side of the
+    # Whisparr/tracker divide ("Family Therapy XXX" vs "[FamilyTherapy] …", and the
+    # reverse). Alias the toggled spelling so both retrieval (plan_queries) and
+    # matching/indexing (which consume site_aliases) cover both forms. squash() is
+    # the same key the matcher/index compare against, so the guard here mirrors theirs.
+    alias = xxx_site_variant(site)
+    site_aliases = (alias,) if alias and squash(alias) != squash(site) else ()
     return SceneFingerprint(
         scene_id=int(record.get("id", 0)),
         site=site,
-        site_aliases=(),
+        site_aliases=site_aliases,
         date=parsed,
         title=title,
         performers=performers,

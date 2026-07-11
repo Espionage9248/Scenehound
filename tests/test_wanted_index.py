@@ -86,6 +86,24 @@ def test_lossless_site_plus_two_performers_no_date_no_title_overlap():
     assert scene in idx.candidates_for_title(release)
 
 
+def test_lossless_xxx_toggled_site_alias_both_directions():
+    # Losslessness invariant for the decorative-"xxx" feature: whenever the matcher
+    # matches a scene via its xxx-toggled site alias, the pre-filter must return that
+    # scene (index key set >= what the matcher can match). Checked both ways: Whisparr
+    # "…XXX" vs a stripped-spelling undated release, and the reverse dated release.
+    fwd = SceneFingerprint(53, "Family Therapy XXX", ("Family Therapy",),
+                           date(2026, 7, 7), "The Massage Lesson", ("Jane Doe",))
+    fwd_release = "[FamilyTherapy] The Massage Lesson 1080p"
+    assert score(fwd, fwd_release).confidence >= 75              # site(alias)+title
+    assert fwd in WantedIndex([fwd]).candidates_for_title(fwd_release)
+
+    rev = SceneFingerprint(54, "Family Therapy", ("Family Therapy XXX",),
+                           date(2026, 7, 7), "The Massage Lesson", ("Jane Doe",))
+    rev_release = "FamilyTherapyXXX.26.07.07.Bonus.Scene.XXX.1080p"
+    assert score(rev, rev_release).confidence >= 75              # date+site(alias)
+    assert rev in WantedIndex([rev]).candidates_for_title(rev_release)
+
+
 def test_site_name_indexed_for_token_lookup():
     scene = SceneFingerprint(52, "ExampleSite", ("ExSite",), date(2015, 1, 1),
                              "Some Scene", ("Jane Doe",))

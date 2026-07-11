@@ -25,9 +25,16 @@ def plan_queries(scene: SceneFingerprint, max_queries: int = 5) -> tuple[str, ..
     d = scene.date
     perf = scene.performers[0] if scene.performers else None
     title_str = " ".join(content_tokens(scene.title)[:3])
+    yymmdd = d.strftime("%y.%m.%d")
+    # Primary site first, then aliases (e.g. the xxx-toggled spelling from
+    # normalize.xxx_site_variant). The tracker matches only the literal title text,
+    # so a studio that carries "xxx" on one side of the divide but not the other
+    # must be searched in BOTH spellings; squash() makes them equivalent for the
+    # matcher/index, but never for the tracker's own search.
+    sites = (scene.site, *scene.site_aliases)
 
     variants: list[str] = [
-        f"{scene.site} {d.strftime('%y.%m.%d')}",   # dated scene convention: Site.YY.MM.DD
+        f"{scene.site} {yymmdd}",                    # dated scene convention: Site.YY.MM.DD
     ]
     # Date-free, high-recall variants: work for undated-title trackers where any
     # date term ANDs the result to zero. Performer alone is the single best query
@@ -37,9 +44,11 @@ def plan_queries(scene: SceneFingerprint, max_queries: int = 5) -> tuple[str, ..
     if perf and title_str:
         variants.append(f"{perf} {title_str}")       # performer + distinctive title words
     if title_str:
-        variants.append(f"{scene.site} {title_str}")  # site + distinctive title words
-    variants.append(scene.site)                      # site alone (matcher filters by date)
-    # ISO-dated fallbacks: rare in real titles, worth a slot only if budget remains.
+        variants += [f"{s} {title_str}" for s in sites]  # site/alias + distinctive title words
+    variants += list(sites)                          # site/alias alone (matcher filters by date)
+    # ISO-dated and alias-dated fallbacks: rare in real titles, worth a slot only
+    # if budget remains (the primary dated convention is already variant 0).
+    variants += [f"{s} {yymmdd}" for s in scene.site_aliases]
     variants.append(f"{scene.site} {d.isoformat()}")
     if perf:
         variants.append(f"{perf} {d.isoformat()}")

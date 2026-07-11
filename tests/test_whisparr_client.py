@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 
 from scenehound.clients.whisparr import WhisparrClient, scene_from_record
+from scenehound.matcher import score
 
 SAMPLE = {
     "id": 12225,
@@ -28,6 +29,36 @@ def test_scene_from_record_rejects_incomplete():
     assert scene_from_record({"id": 1, "title": "x"}) is None            # no date/site
     assert scene_from_record({**SAMPLE, "releaseDate": None}) is None
     assert scene_from_record({**SAMPLE, "studioTitle": ""}) is None      # no site (and no studio fallback)
+
+
+def test_scene_from_record_generates_xxx_site_alias_both_directions():
+    # Whisparr has "…XXX" but the tracker doesn't -> the stripped form is aliased.
+    suffixed = scene_from_record({**SAMPLE, "studioTitle": "Family Therapy XXX"})
+    assert suffixed.site == "Family Therapy XXX"
+    assert "Family Therapy" in suffixed.site_aliases
+    # Whisparr has the bare name but the tracker carries "…XXX" -> the "xxx" form is aliased.
+    bare = scene_from_record({**SAMPLE, "studioTitle": "Family Therapy"})
+    assert bare.site == "Family Therapy"
+    assert "Family Therapy XXX" in bare.site_aliases
+
+
+def test_scene_from_record_no_alias_when_no_sensible_toggle():
+    # A degenerate site ("XXX") yields no alias rather than an empty/bogus one.
+    s = scene_from_record({**SAMPLE, "studioTitle": "XXX"})
+    assert s.site_aliases == ()
+
+
+def test_generated_alias_lets_matcher_hit_the_stripped_tracker_spelling():
+    # End-to-end: the auto-generated alias is what makes an "…XXX" Whisparr studio
+    # score a match against a release that titles the studio WITHOUT the suffix.
+    scene = scene_from_record({
+        **SAMPLE,
+        "studioTitle": "Family Therapy XXX",
+        "title": "The Massage Lesson",
+        "performerNames": ["Jane Doe"],
+    })
+    release = "[FamilyTherapy] The Massage Lesson 1080p"   # stripped spelling, no date, no performer
+    assert score(scene, release).confidence >= 75
 
 
 def test_scene_from_record_multiple_performers():
