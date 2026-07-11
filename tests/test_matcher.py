@@ -120,3 +120,40 @@ def test_distinctive_full_title_still_strong_with_performer_no_date():
     s = score(scene, "Jane.Doe.Latex.Worship.Session.720p")
     assert s.confidence >= 75
     assert {"performer", "title"} <= set(s.strong_signals)
+
+
+def test_fuzzy_site_does_not_fabricate_from_coincidental_phrase():
+    scene = SceneFingerprint(20, "SisLovesMe", (), date(2026, 7, 7), "Some Scene", ())
+    s = score(scene, "WrongStudio.2026.07.07.Sis.Loves.My.Stepbro.720p")
+    assert "site" not in s.strong_signals
+    assert s.confidence < 75
+    scene2 = SceneFingerprint(21, "MyFamilyPies", (), date(2026, 7, 7), "Some Scene", ())
+    s2 = score(scene2, "WrongStudio.2026.07.07.My.Family.Lies.720p")
+    assert "site" not in s2.strong_signals
+    assert s2.confidence < 75
+
+
+def test_fuzzy_site_still_tolerates_typo_in_long_site_name():
+    scene = SceneFingerprint(22, "Scott Stark Studios", (), date(2026, 7, 5), "Beach Day", ())
+    s = score(scene, "Scott.Stark.Studioss.2026-07-05.Beach.Day.1080p")
+    assert "site" in s.strong_signals
+
+
+def test_punctuated_performer_names_match():
+    scene = SceneFingerprint(23, "Some Site", (), date(2026, 7, 7),
+                             "Latex Worship Session", ("Jane O'Neil",))
+    s = score(scene, "Jane.ONeil.Latex.Worship.Session.720p")
+    assert "performer" in s.strong_signals
+    assert s.confidence >= 75
+    scene2 = SceneFingerprint(24, "Some Site", (), date(2026, 7, 7),
+                              "Latex Worship Session", ("Mary-Jane Watson",))
+    s2 = score(scene2, "MaryJane.Watson.Latex.Worship.Session.720p")
+    assert "performer" in s2.strong_signals
+    assert s2.confidence >= 75
+
+
+def test_short_performer_still_rejected_after_ngram_change():
+    scene = SceneFingerprint(25, "Some Site", (), date(2026, 7, 7), "Whatever", ("Ai", "Bo"))
+    s = score(scene, "SomeOtherStudio.2026.07.07.Maintenance.Training.Bonus.1080p")
+    assert "performer" not in s.strong_signals
+    assert s.confidence < 75

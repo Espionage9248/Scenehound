@@ -8,8 +8,11 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   contiguous-token n-grams), so a short site like 'Vixen' does not match
   inside 'Vixens'. A fuzzy typo fallback applies only to sufficiently long
   site names, using full-string ratio against similar-length n-grams.
-- Performer names match as whole tokens (not raw substrings), so 'Ai' does
-  not match inside 'maintenance'; ultra-short single-token names are ignored.
+- Performer names match by squashed full name against the boundary-aligned
+  n-grams (not raw substrings), so 'Ai' does not match inside 'maintenance'
+  while punctuated names that render differently in the release (O'Neil ->
+  ONeil, Mary-Jane -> MaryJane) still match; ultra-short single-token names
+  are ignored.
 - Title counts as a STRONG signal only for a distinctive (>= 2 content token)
   title whose tokens are all present in the candidate — a generic one-word
   title cannot become a second strong signal by mere containment.
@@ -31,7 +34,8 @@ MULTI_PERFORMER_BONUS = 15
 STRONG_TITLE = 40
 TITLE_MAX = 25
 SINGLE_SIGNAL_CAP = 65
-_FUZZY_SITE_MIN = 90
+_FUZZY_SITE_MIN = 95      # fuzzy typo tolerance for long site names; 95 rejects
+                          # one-substitution coincidental phrases (e.g. sislovesme↔sislovesmy)
 _TITLE_RATIO_GATE = 60
 _MIN_FUZZY_SITE_LEN = 8       # only fuzzy-match site names at least this long
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
@@ -75,13 +79,20 @@ def _site_in_title(ngrams: frozenset[str], scene: SceneFingerprint) -> bool:
     return False
 
 
-def _performer_present(performer: str, cand_tokens: frozenset[str]) -> bool:
+def _performer_present(performer: str, ngrams: frozenset[str]) -> bool:
+    """Present when the squashed full name equals a boundary-aligned n-gram, so
+    punctuation that renders differently in the release (O'Neil -> ONeil,
+    Mary-Jane -> MaryJane) still matches, while short single-token names and
+    substrings-inside-words do not. NOTE: accented names whose accent the
+    release replaces with a base letter (Renee <- Renée) are not matched here
+    because squash drops non-ASCII rather than transliterating; that is a known
+    normalize-layer limitation tracked separately, not addressed in this fix."""
     p_toks = tokenize(performer)
     if not p_toks:
         return False
     if len(p_toks) == 1 and len(p_toks[0]) < _MIN_PERFORMER_TOKEN_LEN:
         return False
-    return all(t in cand_tokens for t in p_toks)
+    return squash(performer) in ngrams
 
 
 def score(
@@ -90,7 +101,6 @@ def score(
     other_sites: frozenset[str] = frozenset(),
 ) -> MatchScore:
     ngrams = _title_ngrams(title)
-    cand_tokens = frozenset(tokenize(title))
     detail: dict[str, float] = {}
     strong: list[str] = []
 
@@ -113,7 +123,7 @@ def score(
                 return MatchScore(0, tuple(strong), "site-mismatch", detail)
 
     # --- performers ---
-    hits = sum(1 for p in scene.performers if _performer_present(p, cand_tokens))
+    hits = sum(1 for p in scene.performers if _performer_present(p, ngrams))
     if hits:
         strong.append("performer")
         detail["performer"] = STRONG_PERFORMER + (MULTI_PERFORMER_BONUS if hits > 1 else 0)
