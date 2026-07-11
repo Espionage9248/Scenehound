@@ -87,3 +87,39 @@
     title: "Latex Worship Session"
     performers: ["Jane O'Neil"]
   expect: match
+
+# --- decorative "xxx" studio-suffix asymmetry (both directions) ---
+# The `aliases` here are exactly what whisparr.scene_from_record now auto-generates
+# via normalize.xxx_site_variant. site+title is the load-bearing strong pair, so the
+# match hangs entirely on the toggled site spelling matching the release.
+
+- release: "[FamilyTherapy] The Massage Lesson 1080p"   # Whisparr has "…XXX", Empornium doesn't; undated
+  scene:
+    site: "Family Therapy XXX"
+    aliases: ["Family Therapy"]
+    date: 2026-07-07
+    title: "The Massage Lesson"
+    performers: ["Jane Doe"]
+  expect: match
+
+- release: "FamilyTherapyXXX.26.07.07.Bonus.Scene.XXX.1080p"   # reverse: Whisparr bare, tracker has "…XXX"; date+site
+  scene:
+    site: "Family Therapy"
+    aliases: ["Family Therapy XXX"]
+    date: 2026-07-07
+    title: "The Massage Lesson"
+    performers: ["Jane Doe"]
+  expect: match
+
+# Real Empornium case: Whisparr lists the male lead first ("Alex Adams"), the tracker
+# names the scene after the female performer and glues the studio ("[FamilyTherapy]").
+# Retrieval is fixed in plan_queries (title-only + all performers); this locks in that
+# scoring still clears via site(alias)+performer(Lulu)+title even with the male first.
+- release: "[FamilyTherapy] Lulu Romanova - Special Medicine {Se7enSeas}"
+  scene:
+    site: "Family Therapy XXX"
+    aliases: ["Family Therapy"]
+    date: 2026-07-08
+    title: "Special Medicine"
+    performers: ["Alex Adams", "Lulu Romanova"]
+  expect: match

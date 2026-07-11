@@ -19,10 +19,40 @@ JUNK_TOKENS: frozenset[str] = frozenset({
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _SPLIT = re.compile(r"[^a-zA-Z0-9]+")
 
+# A decorative trailing "xxx" studio marker, optionally preceded by separators
+# (" XXX", ".xxx", "-XXX", or glued straight onto the last token). Anchored at the
+# end so only a *suffix* is toggled.
+_XXX_SUFFIX_RE = re.compile(r"[\s._-]*xxx$", re.IGNORECASE)
+# A stem shorter than this (squashed) is too generic to alias safely: stripping it
+# would let a coincidental short token fabricate a site signal (e.g. "Maxxx" -> "Ma").
+_MIN_XXX_STEM = 3
+
 
 def squash(s: str) -> str:
     """Lowercase and strip everything that is not a letter or digit."""
     return _NON_ALNUM.sub("", s.lower())
+
+
+def xxx_site_variant(site: str) -> str | None:
+    """Toggle a studio's decorative trailing 'xxx', returning the other spelling
+    as an alias, or None when no sensible toggle exists.
+
+    Studios routinely carry an 'xxx' suffix on one side of the Whisparr/tracker
+    divide but not the other ('Family Therapy XXX' in Whisparr vs '[FamilyTherapy]
+    ...' on Empornium, and the reverse). The returned string is deliberately usable
+    BOTH as a raw tracker search term (query_planner.plan_queries feeds it verbatim)
+    and, once squash()ed, as a matcher/index site key. Scoped to the decorative
+    suffix only; generalizing to other decorative tokens would live here too but is
+    intentionally out of scope (a broader toggle risks merging distinct studios)."""
+    s = site.strip()
+    if not s:
+        return None
+    if _XXX_SUFFIX_RE.search(s):
+        stem = _XXX_SUFFIX_RE.sub("", s).strip()
+        return stem if len(squash(stem)) >= _MIN_XXX_STEM else None
+    # No suffix present: add one. squash() collapses the space, so " XXX" and a
+    # glued "XXX" are the same key; the space keeps it a readable search term.
+    return f"{s} XXX"
 
 
 def tokenize(s: str) -> list[str]:

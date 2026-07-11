@@ -12,7 +12,7 @@
   <Category>Downloaders: Tools:</Category>
   <WebUI>http://[IP]:[PORT:9797]/healthz</WebUI>
   <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/prowlarr.png</Icon>
+  <Icon>https://raw.githubusercontent.com/Espionage9248/Scenehound/main/unraid/scenehound.png</Icon>
   <ExtraParams>--restart unless-stopped</ExtraParams>
   <PostArgs/>
   <DonateText/>
