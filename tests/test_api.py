@@ -120,3 +120,47 @@ def test_healthz(client):
     body = r.json()
     assert body["status"] == "ok"
     assert body["index_size"] == 1
+
+
+def test_unknown_function_returns_203(client):
+    r = client.get("/indexer/empornium/api", params={"t": "tvsearch", "apikey": "shk"})
+    assert ET.fromstring(r.content).get("code") == "203"
+
+
+def test_prowlarr_error_returns_900(app):
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from scenehound.clients.prowlarr import ProwlarrClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    # Swap in a Prowlarr transport that 500s (mirrors the conftest app fixture,
+    # which builds ProwlarrClient the same way, but with a failing handler).
+    state = app.state.scenehound
+    hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    state.prowlarr = ProwlarrClient(
+        state.config.prowlarr.url, state.config.prowlarr.api_key, hc
+    )
+    # unresolved scene -> passthrough -> one gated Prowlarr call -> 500 -> ProwlarrError -> 900
+    r = TestClient(app).get(
+        "/indexer/empornium/api",
+        params={"t": "search", "q": "unknownsite 01.01.2026", "apikey": "shk"},
+    )
+    assert ET.fromstring(r.content).get("code") == "900"
+
+
+def test_healthz_reports_index_age(client, app):
+    body = client.get("/healthz").json()
+    assert isinstance(body["index_age_seconds"], float)  # index was set in the fixture
+    assert body["index_age_seconds"] >= 0
+
+
+def test_healthz_null_age_when_no_index(app):
+    from fastapi.testclient import TestClient
+
+    app.state.scenehound.index_holder = IndexHolder()  # never refreshed
+    body = TestClient(app).get("/healthz").json()
+    assert body["index_size"] == 0
+    assert body["index_age_seconds"] is None
