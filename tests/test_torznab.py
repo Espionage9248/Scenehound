@@ -18,6 +18,7 @@ PROWLARR_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
       <title>Messy.Release.Name.26.07.05.XXX</title>
       <guid>https://tracker/torrents.php?id=111</guid>
       <link>http://prowlarr:9696/12/download?apikey=k&amp;link=abc</link>
+      <enclosure url="http://prowlarr:9696/12/download?apikey=k&amp;link=abc" length="1073741824" type="application/x-bittorrent"/>
       <size>1073741824</size>
       <pubDate>Sun, 05 Jul 2026 10:00:00 +0000</pubDate>
       <torznab:attr name="seeders" value="12"/>
@@ -40,6 +41,9 @@ def test_parse_feed_extracts_candidates():
     assert c.seeders == 12
     assert c.categories == (6000,)
     assert c.raw_attrs["downloadvolumefactor"] == "0"
+    assert c.enclosure["url"].startswith("http://prowlarr:9696/12/download")
+    assert c.enclosure["type"] == "application/x-bittorrent"
+    assert c.enclosure["length"] == "1073741824"
 
 
 def test_roundtrip_preserves_everything_except_title():
@@ -52,6 +56,12 @@ def test_roundtrip_preserves_everything_except_title():
     assert reparsed.size == c.size
     assert reparsed.seeders == c.seeders
     assert reparsed.raw_attrs["downloadvolumefactor"] == "0"
+    # the torrent download URL (enclosure) survives rewriting — without this the
+    # downstream client (Whisparr) errors with no download URL and can't grab
+    assert reparsed.enclosure == c.enclosure
+    root_for_enc = ET.fromstring(out)
+    enc = root_for_enc.find(".//item/enclosure")
+    assert enc is not None and enc.get("url") == c.enclosure["url"]
     # original title preserved for audit
     root = ET.fromstring(out)
     ns = {"torznab": "http://torznab.com/schemas/2015/feed"}

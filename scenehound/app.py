@@ -48,8 +48,33 @@ async def refresh_loop(
 
 def create_app(config_dir: Path | None = None) -> FastAPI:
     config_dir = config_dir or Path(os.environ.get("SCENEHOUND_CONFIG_DIR", "/config"))
-    config = load_config(config_dir, env=os.environ)
-    configure_logging(config.log_level)
+    # Configure logging BEFORE loading config: a bad or missing config.yaml crashes
+    # the uvicorn factory before the app ever starts, so this is the only chance to
+    # say *why* instead of the container silently crash-looping.
+    configure_logging(os.environ.get("SCENEHOUND_LOG_LEVEL", "info"))
+    config_path = config_dir / "config.yaml"
+    try:
+        config = load_config(config_dir, env=os.environ)
+    except FileNotFoundError:
+        log.error(
+            "config not found: %s does not exist. Create it with at least an "
+            "'indexers:' list; Whisparr/Prowlarr URLs and API keys are supplied via "
+            "environment variables (WHISPARR_URL, WHISPARR_API_KEY, PROWLARR_URL, "
+            "PROWLARR_API_KEY). Exiting.",
+            config_path,
+        )
+        raise
+    except Exception as exc:
+        log.error(
+            "config invalid: could not parse %s: %s. Common cause: a '!env ...' YAML "
+            "tag — Scenehound reads API keys and URLs from environment variables, not "
+            "YAML tags, so config.yaml only needs the 'indexers:' list. Exiting.",
+            config_path, exc,
+        )
+        raise
+    # Re-apply the level from the loaded config (basicConfig above is idempotent for
+    # handlers, so set the level explicitly in case config.yaml specifies a different one).
+    logging.getLogger().setLevel(getattr(logging, config.log_level.upper(), logging.INFO))
 
     state = AppState(
         config=config,

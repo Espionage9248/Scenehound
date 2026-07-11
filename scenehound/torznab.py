@@ -34,6 +34,7 @@ def parse_feed(xml: bytes) -> list[ReleaseCandidate]:
             else:
                 attrs[name] = value
         size_text = item.findtext("size")
+        enc = item.find("enclosure")
         out.append(
             ReleaseCandidate(
                 title=item.findtext("title", ""),
@@ -45,6 +46,7 @@ def parse_feed(xml: bytes) -> list[ReleaseCandidate]:
                 categories=tuple(categories),
                 pub_date=item.findtext("pubDate"),
                 raw_attrs=attrs,
+                enclosure=dict(enc.attrib) if enc is not None else {},
             )
         )
     return out
@@ -70,6 +72,10 @@ def build_feed(entries: Sequence[FeedEntry]) -> bytes:
         _sub(item, "title", entry.title_override if entry.title_override is not None else c.title)
         _sub(item, "guid", c.guid)
         _sub(item, "link", c.link)
+        # The enclosure carries the torrent download URL; torrent Torznab clients
+        # (Whisparr) read it from here and error without it. Re-emit it verbatim.
+        if c.enclosure:
+            ET.SubElement(item, "enclosure", c.enclosure)
         _sub(item, "size", str(c.size) if c.size is not None else None)
         _sub(item, "pubDate", c.pub_date)
         for cat in c.categories:

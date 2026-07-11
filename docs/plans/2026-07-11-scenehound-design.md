@@ -213,31 +213,46 @@ Guiding rule: **degrade to passthrough, never block.**
 
 ## Configuration
 
-One YAML file, every value overridable by env var (Unraid-friendly):
+One YAML file. URLs, API keys, threshold and rate-limit values are read from
+environment variables (set by the Unraid template) when present, falling back to
+the YAML value. **API keys and URLs use plain env vars — `WHISPARR_API_KEY`,
+`WHISPARR_URL`, `PROWLARR_API_KEY`, `PROWLARR_URL` — NOT a `!env` YAML tag**
+(`yaml.safe_load` rejects custom tags). In practice the only thing config.yaml must
+contain is the `indexers:` list; everything else can come from the environment:
 
 ```yaml
-whisparr:
-  url: http://192.168.1.x:6969
-  api_key: !env WHISPARR_API_KEY
-prowlarr:
-  url: http://192.168.1.x:9696
-  api_key: !env PROWLARR_API_KEY
-
+# Minimal — the rest is supplied by env vars (the Unraid template sets them):
 indexers:
   - slug: empornium          # Scenehound endpoint: /indexer/empornium/api
     prowlarr_id: 12          # the real indexer's ID in Prowlarr
   - slug: happyfappy
     prowlarr_id: 15
+```
+
+```yaml
+# Full form — every field may also be given in YAML (env vars override these):
+whisparr:
+  url: http://192.168.1.x:6969
+  api_key: WHISPARR_API_KEY_VALUE      # or omit and set WHISPARR_API_KEY env var
+prowlarr:
+  url: http://192.168.1.x:9696
+  api_key: PROWLARR_API_KEY_VALUE      # or omit and set PROWLARR_API_KEY env var
+
+indexers:
+  - slug: empornium
+    prowlarr_id: 12
+  - slug: happyfappy
+    prowlarr_id: 15
 
 matching:
-  threshold: 75              # min confidence to return a result
-  max_queries_per_search: 5
+  threshold: 75              # min confidence to return a result (env: SCENEHOUND_THRESHOLD)
+  max_queries_per_search: 5  # env: SCENEHOUND_MAX_QUERIES
 
 rate_limit:
-  burst: 4
-  refill_seconds: 15         # 1 token per N seconds, per indexer
+  burst: 4                   # env: SCENEHOUND_RATE_BURST
+  refill_seconds: 15         # 1 token per N seconds, per indexer (env: SCENEHOUND_RATE_REFILL)
 
-log_level: info              # debug = full per-candidate scoring detail
+log_level: info              # debug = full per-candidate scoring detail (env: SCENEHOUND_LOG_LEVEL)
 ```
 
 Scenehound has its own API key (generated on first run if unset) which is pasted
