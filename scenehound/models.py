@@ -26,3 +26,7 @@ class ReleaseCandidate:
     categories: tuple[int, ...] = ()
     pub_date: str | None = None
     raw_attrs: dict[str, str] = field(default_factory=dict)
+    # The <enclosure> attributes (url/type/length) carry the torrent download URL.
+    # Torrent Torznab clients (Whisparr) read the download URL from here, not <link>,
+    # so it MUST be preserved verbatim or grabs fail.
+    enclosure: dict[str, str] = field(default_factory=dict)
