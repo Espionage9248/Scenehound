@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>scenehound</Name>
+  <Repository>scenehound:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://YOUR_FORGEJO/scenehound/issues</Support>
+  <Project>https://YOUR_FORGEJO/scenehound</Project>
+  <Overview>Torznab matching proxy between Whisparr and Prowlarr. Identifies badly-named scene releases on private trackers using Whisparr's own metadata and returns them with canonical titles Whisparr can parse. Add Scenehound's per-tracker endpoints to Whisparr as Torznab indexers; searches and RSS flow through unchanged otherwise.</Overview>
+  <Category>Downloaders: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:9797]/healthz</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/prowlarr.png</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Config Name="WebUI Port" Target="9797" Default="9797" Mode="tcp" Description="Torznab endpoint port" Type="Port" Display="always" Required="true" Mask="false">9797</Config>
+  <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/scenehound" Mode="rw" Description="Holds config.yaml and the generated API key" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/scenehound</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID that owns /config and runs the service (Unraid default 99 = nobody)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID that owns /config and runs the service (Unraid default 100 = users)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Whisparr URL" Target="WHISPARR_URL" Default="http://192.168.1.10:6969" Mode="" Description="Base URL of your Whisparr v3 instance" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Whisparr API Key" Target="WHISPARR_API_KEY" Default="" Mode="" Description="Whisparr Settings > General > API Key" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Prowlarr URL" Target="PROWLARR_URL" Default="http://192.168.1.10:9696" Mode="" Description="Base URL of your Prowlarr instance" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Prowlarr API Key" Target="PROWLARR_API_KEY" Default="" Mode="" Description="Prowlarr Settings > General > API Key" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Match Threshold" Target="SCENEHOUND_THRESHOLD" Default="75" Mode="" Description="Minimum confidence (0-100) to return a match. Raise if you ever see a wrong grab." Type="Variable" Display="advanced" Required="false" Mask="false">75</Config>
+  <Config Name="Log Level" Target="SCENEHOUND_LOG_LEVEL" Default="info" Mode="" Description="info or debug (debug logs per-candidate scoring)" Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+  <Config Name="Rate Limit Burst" Target="SCENEHOUND_RATE_BURST" Default="4" Mode="" Description="Token bucket burst per indexer" Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
+  <Config Name="Rate Limit Refill Seconds" Target="SCENEHOUND_RATE_REFILL" Default="15" Mode="" Description="Seconds per token refill (higher = gentler on trackers)" Type="Variable" Display="advanced" Required="false" Mask="false">15</Config>
+</Container>
