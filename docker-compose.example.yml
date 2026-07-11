@@ -8,6 +8,8 @@ services:
     volumes:
       - ./config:/config
     environment:
+      - PUID=1000
+      - PGID=1000
       - WHISPARR_URL=http://whisparr:6969
       - WHISPARR_API_KEY=changeme
       - PROWLARR_URL=http://prowlarr:9696
