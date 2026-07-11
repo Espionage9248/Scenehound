@@ -50,6 +50,55 @@ def test_capped_and_deduplicated():
     assert len(set(qs)) == 3
 
 
+def test_all_performers_queried_not_just_first():
+    # Regression (Empornium "Special Medicine"): Whisparr lists the male lead first
+    # ("Alex Adams"), but the tracker names the scene after the female performer
+    # ("Lulu Romanova"). Querying only performers[0] never retrieved it. Every
+    # performer must be queried; the wrong ones just return matcher-rejected noise.
+    scene = SceneFingerprint(
+        13530, "Family Therapy XXX", ("Family Therapy",), date(2026, 7, 8),
+        "Special Medicine", ("Alex Adams", "Lulu Romanova"),
+    )
+    qs = plan_queries(scene, max_queries=99)
+    assert "Alex Adams" in qs
+    assert "Lulu Romanova" in qs      # the non-first performer, missed before
+
+
+def test_distinctive_title_queried_alone():
+    # A distinctive (>=2 content token) title reliably retrieves on undated trackers
+    # that glue the studio token ("[FamilyTherapy]") — where a spaced studio query
+    # can't match — and regardless of which performer the tracker names it after.
+    scene = SceneFingerprint(
+        13530, "Family Therapy XXX", ("Family Therapy",), date(2026, 7, 8),
+        "Special Medicine", ("Alex Adams", "Lulu Romanova"),
+    )
+    qs = plan_queries(scene, max_queries=99)
+    assert "special medicine" in qs
+    # and it must fire within a tight rate budget (it is THE reliable retriever here)
+    assert "special medicine" in plan_queries(scene, max_queries=3)
+
+
+def test_title_and_performers_precede_site_queries():
+    # Site-based queries are unreliable on trackers that glue the studio token, so
+    # the title/performer retrievers must come BEFORE any site-only / site+title query.
+    scene = SceneFingerprint(
+        13530, "Family Therapy XXX", ("Family Therapy",), date(2026, 7, 8),
+        "Special Medicine", ("Alex Adams", "Lulu Romanova"),
+    )
+    qs = plan_queries(scene, max_queries=99)
+    assert qs.index("special medicine") < qs.index("Family Therapy XXX")
+    assert qs.index("Lulu Romanova") < qs.index("Family Therapy XXX")
+
+
+def test_generic_one_word_title_not_queried_alone():
+    # A one-content-token title is too generic to search alone; fall back to
+    # performers instead of blasting the tracker with a single common word.
+    scene = SceneFingerprint(9, "Some Site", (), date(2026, 1, 1), "Punished", ("Ann Jones",))
+    qs = plan_queries(scene, max_queries=99)
+    assert "punished" not in qs
+    assert "Ann Jones" in qs
+
+
 def test_no_performers_no_performer_variant():
     scene = SceneFingerprint(2, "Site", (), date(2026, 1, 1), "A Title Here", ())
     qs = plan_queries(scene)
@@ -78,22 +127,27 @@ def test_site_aliases_produce_search_variants():
     )
 
 
-def test_alias_site_plus_title_reachable_in_default_budget():
-    # The default budget must still surface at least one alias-spelling variant so
-    # the toggled studio is actually searchable in practice, not only at max budget.
+def test_site_aliases_still_searched_at_full_budget():
+    # The xxx-toggled spelling is still emitted (both spellings get searched), but
+    # it is demoted below the title/performer retrievers that actually work on
+    # undated glued-studio trackers — so assert reachability at full budget rather
+    # than within the tight default budget.
     scene = SceneFingerprint(
         8, "Family Therapy XXX", ("Family Therapy",), date(2026, 7, 7),
         "The Massage Lesson", ("Jane Doe",),
     )
-    qs = plan_queries(scene)  # default max_queries=5
+    qs = plan_queries(scene, max_queries=99)
     assert any(q.startswith("Family Therapy ") and "XXX" not in q for q in qs)
+    assert "Family Therapy" in qs  # alias site-alone
 
 
-def test_no_aliases_query_shape_unchanged():
-    # Guard: a scene with no aliases keeps the exact prior variant shape/order.
+def test_query_shape_and_ordering():
+    # Full variant order for a simple scene: dated convention, then the date-free
+    # retrievers (distinctive title, then performer), then combined/site variants.
     scene = SceneFingerprint(3, "Foo", (), date(2026, 7, 7), "Bar Baz", ("Foo",))
     assert plan_queries(scene) == (
         "Foo 26.07.07",
+        "bar baz",
         "Foo",
         "Foo bar baz",
         "Foo 2026-07-07",
@@ -108,6 +162,7 @@ def test_dedup_collapses_colliding_variants():
     assert len(qs) == len(set(qs))  # no duplicates survive
     assert qs == (
         "Foo 26.07.07",
+        "bar baz",
         "Foo",
         "Foo bar baz",
         "Foo 2026-07-07",

@@ -23,9 +23,10 @@ from scenehound.normalize import content_tokens
 
 def plan_queries(scene: SceneFingerprint, max_queries: int = 5) -> tuple[str, ...]:
     d = scene.date
-    perf = scene.performers[0] if scene.performers else None
-    title_str = " ".join(content_tokens(scene.title)[:3])
     yymmdd = d.strftime("%y.%m.%d")
+    title_toks = content_tokens(scene.title)
+    title_str = " ".join(title_toks[:3])
+    performers = scene.performers
     # Primary site first, then aliases (e.g. the xxx-toggled spelling from
     # normalize.xxx_site_variant). The tracker matches only the literal title text,
     # so a studio that carries "xxx" on one side of the divide but not the other
@@ -36,22 +37,36 @@ def plan_queries(scene: SceneFingerprint, max_queries: int = 5) -> tuple[str, ..
     variants: list[str] = [
         f"{scene.site} {yymmdd}",                    # dated scene convention: Site.YY.MM.DD
     ]
-    # Date-free, high-recall variants: work for undated-title trackers where any
-    # date term ANDs the result to zero. Performer alone is the single best query
-    # for the "[Studio] Performer - Title" convention.
-    if perf:
-        variants.append(perf)                        # performer alone
-    if perf and title_str:
-        variants.append(f"{perf} {title_str}")       # performer + distinctive title words
+    # --- Date-free, high-recall retrievers, ordered to fire within a tight rate
+    # budget. These work for undated-title trackers (Empornium) where any date term
+    # ANDs the result to zero. The two that actually retrieve there are the
+    # distinctive TITLE and the PERFORMERS -- NOT the studio: trackers glue the
+    # studio into one token ("[FamilyTherapy]"), so a spaced studio query can't
+    # match it. So title + performers come first; site queries are demoted.
+    #
+    # Distinctive title alone (>=2 content tokens): performer-independent, and the
+    # scene title reliably appears in the release title regardless of which
+    # performer the tracker names it after.
+    if len(title_toks) >= 2:
+        variants.append(title_str)
+    # Every performer alone -- NOT just performers[0]. The tracker names the scene
+    # after one specific performer, often not the one Whisparr lists first (e.g. the
+    # male lead is listed first but essentially never appears in the title). Whisparr
+    # exposes no reliable gender, so query them all; a non-matching performer query
+    # merely returns candidates the two-strong-signal matcher rejects.
+    variants += list(performers)
     if title_str:
-        variants += [f"{s} {title_str}" for s in sites]  # site/alias + distinctive title words
+        variants += [f"{p} {title_str}" for p in performers]  # performer + distinctive title
+    # Site-based queries: lower priority (they miss on glued-studio trackers) but
+    # still help trackers that DO split the studio and the dated scene convention.
+    if title_str:
+        variants += [f"{s} {title_str}" for s in sites]  # site/alias + distinctive title
     variants += list(sites)                          # site/alias alone (matcher filters by date)
     # ISO-dated and alias-dated fallbacks: rare in real titles, worth a slot only
     # if budget remains (the primary dated convention is already variant 0).
     variants += [f"{s} {yymmdd}" for s in scene.site_aliases]
     variants.append(f"{scene.site} {d.isoformat()}")
-    if perf:
-        variants.append(f"{perf} {d.isoformat()}")
+    variants += [f"{p} {d.isoformat()}" for p in performers]
 
     seen: set[str] = set()
     out: list[str] = []

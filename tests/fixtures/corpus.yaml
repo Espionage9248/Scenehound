@@ -110,3 +110,16 @@
     title: "The Massage Lesson"
     performers: ["Jane Doe"]
   expect: match
+
+# Real Empornium case: Whisparr lists the male lead first ("Alex Adams"), the tracker
+# names the scene after the female performer and glues the studio ("[FamilyTherapy]").
+# Retrieval is fixed in plan_queries (title-only + all performers); this locks in that
+# scoring still clears via site(alias)+performer(Lulu)+title even with the male first.
+- release: "[FamilyTherapy] Lulu Romanova - Special Medicine {Se7enSeas}"
+  scene:
+    site: "Family Therapy XXX"
+    aliases: ["Family Therapy"]
+    date: 2026-07-08
+    title: "Special Medicine"
+    performers: ["Alex Adams", "Lulu Romanova"]
+  expect: match
