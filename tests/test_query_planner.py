@@ -18,11 +18,30 @@ def test_best_first_is_site_plus_scene_date_format():
     assert qs[0] == "That Fetish Girl 26.07.07"
 
 
-def test_variants_cover_iso_site_alone_performer_and_title():
-    qs = plan_queries(SCENE)
-    assert "That Fetish Girl 2026-07-07" in qs
+def test_date_free_variants_precede_iso_fallbacks():
+    qs = plan_queries(SCENE, max_queries=99)
+    # performer-alone and site-alone (date-free, high recall) must come before the
+    # ISO-dated fallbacks, which almost never appear in real release titles.
+    assert "Jane Doe" in qs
     assert "That Fetish Girl" in qs
-    assert "Jane Doe 2026-07-07" in qs
+    assert "Jane Doe latex worship session" in qs
+    assert qs.index("Jane Doe") < qs.index("That Fetish Girl 2026-07-07")
+    assert qs.index("That Fetish Girl") < qs.index("Jane Doe 2026-07-07")
+
+
+def test_performer_alone_fires_within_a_small_budget():
+    # The retrieval bug: an undated "[Studio] Performer - Title" release is only
+    # findable by a date-free query, but the rate budget often allows just ~3
+    # variants. A bare performer query must be among the first three.
+    scene = SceneFingerprint(
+        13523, "Mom Comes First", (), date(2026, 7, 3),
+        "The Medical Emergency", ("Skylar Snow",),
+    )
+    qs = plan_queries(scene, max_queries=3)
+    assert "Skylar Snow" in qs
+    # and none of the first three should carry a date term (which would AND to zero
+    # against an undated title)
+    assert not any("2026" in q or "26.07.03" in q for q in qs if q == "Skylar Snow")
 
 
 def test_capped_and_deduplicated():
@@ -48,7 +67,7 @@ def test_dedup_collapses_colliding_variants():
     assert len(qs) == len(set(qs))  # no duplicates survive
     assert qs == (
         "Foo 26.07.07",
-        "Foo 2026-07-07",
         "Foo",
         "Foo bar baz",
+        "Foo 2026-07-07",
     )
