@@ -7,12 +7,15 @@ import re
 from scenehound.models import SceneFingerprint
 
 # (pattern, canonical token). Order = emission order: resolution, source, codec.
-# Patterns must not match inside date fragments; \b plus explicit non-dot
-# guards handle bracketed bare resolutions like [1080] without eating 07.05.
+# Resolution tokens are only recognized when they carry an explicit marker (a `p`
+# suffix like 1080p, or brackets like [1080]). Bare unbracketed numbers (1080, 720)
+# are deliberately NOT matched: they are ambiguous with tip amounts, like counts,
+# durations, and date fragments, so recognizing them would fabricate quality from
+# unrelated digits. No marker → no token (Whisparr parses that as Unknown quality).
 _RESOLUTION = [
     (re.compile(r"\b(2160p|4k|uhd)\b", re.I), "2160p"),
-    (re.compile(r"\b1080p\b|\[1080\]|\b1080(?=\s|$)", re.I), "1080p"),
-    (re.compile(r"\b720p\b|\[720\]|\b720(?=\s|$)", re.I), "720p"),
+    (re.compile(r"\b1080p\b|\[1080\]", re.I), "1080p"),
+    (re.compile(r"\b720p\b|\[720\]", re.I), "720p"),
     (re.compile(r"\b(480p|540p)\b", re.I), "480p"),
 ]
 _SOURCE = [
