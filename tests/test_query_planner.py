@@ -38,3 +38,17 @@ def test_no_performers_no_performer_variant():
         "2026-01-01" in q or "26.01.01" in q or q == "Site" or "title" in q.lower()
         for q in qs
     )
+
+
+def test_dedup_collapses_colliding_variants():
+    # site == performers[0] makes the site+ISO / performer+ISO variants collide,
+    # and the site+title / performer+title variants collide — exercising dedup.
+    scene = SceneFingerprint(3, "Foo", (), date(2026, 7, 7), "Bar Baz", ("Foo",))
+    qs = plan_queries(scene)
+    assert len(qs) == len(set(qs))  # no duplicates survive
+    assert qs == (
+        "Foo 26.07.07",
+        "Foo 2026-07-07",
+        "Foo",
+        "Foo bar baz",
+    )
