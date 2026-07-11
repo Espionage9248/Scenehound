@@ -41,7 +41,7 @@ def parse_feed(xml: bytes) -> list[ReleaseCandidate]:
                 link=item.findtext("link", ""),
                 size=int(size_text) if size_text and size_text.isdigit() else None,
                 seeders=int(attrs["seeders"]) if attrs.get("seeders", "").isdigit() else None,
-                leechers=None,
+                leechers=int(attrs["leechers"]) if attrs.get("leechers", "").isdigit() else None,
                 categories=tuple(categories),
                 pub_date=item.findtext("pubDate"),
                 raw_attrs=attrs,
@@ -67,7 +67,7 @@ def build_feed(entries: Sequence[FeedEntry]) -> bytes:
     for entry in entries:
         c = entry.candidate
         item = ET.SubElement(channel, "item")
-        _sub(item, "title", entry.title_override or c.title)
+        _sub(item, "title", entry.title_override if entry.title_override is not None else c.title)
         _sub(item, "guid", c.guid)
         _sub(item, "link", c.link)
         _sub(item, "size", str(c.size) if c.size is not None else None)
@@ -78,6 +78,8 @@ def build_feed(entries: Sequence[FeedEntry]) -> bytes:
             _attr(item, name, value)
         if c.seeders is not None and "seeders" not in c.raw_attrs:
             _attr(item, "seeders", str(c.seeders))
+        if c.leechers is not None and "leechers" not in c.raw_attrs:
+            _attr(item, "leechers", str(c.leechers))
         if entry.title_override is not None:
             _attr(item, ORIGINAL_TITLE_ATTR, c.title)
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)

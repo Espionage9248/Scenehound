@@ -1,7 +1,14 @@
 import xml.etree.ElementTree as ET
 
 from scenehound.models import ReleaseCandidate
-from scenehound.torznab import FeedEntry, build_caps, build_error, build_feed, parse_feed
+from scenehound.torznab import (
+    ORIGINAL_TITLE_ATTR,
+    FeedEntry,
+    build_caps,
+    build_error,
+    build_feed,
+    parse_feed,
+)
 
 PROWLARR_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
@@ -73,3 +80,53 @@ def test_error_shape():
     assert root.tag == "error"
     assert root.get("code") == "100"
     assert root.get("description") == "Incorrect user credentials"
+
+
+LEECHERS_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>Empornium</title>
+    <item>
+      <title>Messy.Release.Name.26.07.05.XXX</title>
+      <guid>https://tracker/torrents.php?id=111</guid>
+      <link>http://prowlarr:9696/12/download?apikey=k&amp;link=abc</link>
+      <size>1073741824</size>
+      <pubDate>Sun, 05 Jul 2026 10:00:00 +0000</pubDate>
+      <torznab:attr name="seeders" value="12"/>
+      <torznab:attr name="leechers" value="7"/>
+      <torznab:attr name="category" value="6000"/>
+    </item>
+  </channel>
+</rss>"""
+
+
+def test_parse_populates_typed_leechers_and_roundtrips():
+    c = parse_feed(LEECHERS_FEED)[0]
+    assert c.leechers == 7
+    out = build_feed([FeedEntry(c, title_override="Site.2026-07-05.Title.XXX")])
+    reparsed = parse_feed(out)[0]
+    assert reparsed.leechers == 7
+    # no duplicate leechers attr emitted in the rebuilt XML
+    root = ET.fromstring(out)
+    ns = {"torznab": "http://torznab.com/schemas/2015/feed"}
+    leech_attrs = [
+        a
+        for a in root.findall(".//item/torznab:attr", ns)
+        if a.get("name") == "leechers"
+    ]
+    assert len(leech_attrs) == 1
+
+
+def test_empty_title_override_is_a_real_override():
+    c = parse_feed(PROWLARR_FEED)[0]
+    out = build_feed([FeedEntry(c, title_override="")])
+    reparsed = parse_feed(out)[0]
+    assert reparsed.title == ""
+    root = ET.fromstring(out)
+    ns = {"torznab": "http://torznab.com/schemas/2015/feed"}
+    orig = [
+        a
+        for a in root.findall(".//item/torznab:attr", ns)
+        if a.get("name") == ORIGINAL_TITLE_ATTR
+    ]
+    assert orig and orig[0].get("value") == c.title
