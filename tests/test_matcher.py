@@ -133,10 +133,20 @@ def test_fuzzy_site_does_not_fabricate_from_coincidental_phrase():
     assert s2.confidence < 75
 
 
-def test_fuzzy_site_still_tolerates_typo_in_long_site_name():
+def test_site_matches_exact_boundary_ngram_only():
     scene = SceneFingerprint(22, "Scott Stark Studios", (), date(2026, 7, 5), "Beach Day", ())
-    s = score(scene, "Scott.Stark.Studioss.2026-07-05.Beach.Day.1080p")
-    assert "site" in s.strong_signals
+    # correctly-spelled site matches via exact boundary n-gram
+    assert "site" in score(scene, "Scott.Stark.Studios.2026-07-05.Beach.Day.1080p").strong_signals
+    # plural/near-spelling coincidences on real studios must NOT fabricate a site match
+    for site, title in [
+        ("PublicAgent", "Studio.2026.07.07.Public.Agents.Report.1080p"),
+        ("MyFamilyPies", "Studio.2026.07.07.My.Family.Pie.Recipe.1080p"),
+        ("FakeHostel", "Studio.2026.07.07.Fake.Hostels.List.1080p"),
+    ]:
+        sc = SceneFingerprint(0, site, (), date(2026, 7, 7), "Some Scene", ())
+        r = score(sc, title)
+        assert "site" not in r.strong_signals, (site, r.confidence, r.strong_signals)
+        assert r.confidence < 75
 
 
 def test_punctuated_performer_names_match():

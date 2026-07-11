@@ -4,10 +4,12 @@ Pure functions. The two-strong-signal rule and contradiction vetoes are the
 core false-positive defenses — change them only with corpus evidence.
 
 Presence detection is boundary-aware to prevent spurious strong signals:
-- Site names match only when aligned to whole token boundaries (squashed
-  contiguous-token n-grams), so a short site like 'Vixen' does not match
-  inside 'Vixens'. A fuzzy typo fallback applies only to sufficiently long
-  site names, using full-string ratio against similar-length n-grams.
+- Site names match only on exact boundary-aligned n-grams (squashed
+  contiguous-token n-grams) or known aliases, so a short site like 'Vixen'
+  does not match inside 'Vixens'. There is no fuzzy/edit-distance fallback:
+  matching a name against title words by edit distance fabricates strong site
+  signals from coincidental near-spellings (e.g. 'PublicAgent' vs 'Public
+  Agents'), which the two-strong-signal rule cannot absorb.
 - Performer names match by squashed full name against the boundary-aligned
   n-grams (not raw substrings), so 'Ai' does not match inside 'maintenance'
   while punctuated names that render differently in the release (O'Neil ->
@@ -34,10 +36,7 @@ MULTI_PERFORMER_BONUS = 15
 STRONG_TITLE = 40
 TITLE_MAX = 25
 SINGLE_SIGNAL_CAP = 65
-_FUZZY_SITE_MIN = 95      # fuzzy typo tolerance for long site names; 95 rejects
-                          # one-substitution coincidental phrases (e.g. sislovesme↔sislovesmy)
 _TITLE_RATIO_GATE = 60
-_MIN_FUZZY_SITE_LEN = 8       # only fuzzy-match site names at least this long
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
 _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a strong signal
 _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram
@@ -66,16 +65,17 @@ def _title_ngrams(title: str) -> frozenset[str]:
 
 
 def _site_in_title(ngrams: frozenset[str], scene: SceneFingerprint) -> bool:
+    """Present only when the squashed site name or an alias equals a
+    boundary-aligned n-gram. No fuzzy/edit-distance fallback: matching a name
+    against arbitrary title words by edit distance fabricates strong site
+    signals from coincidental near-spellings (e.g. 'PublicAgent' vs the phrase
+    'Public Agents', 'MyFamilyPies' vs 'My Family Pie'), which the two-strong-
+    signal rule cannot absorb. Correctly-spelled sites match exactly; aliases
+    cover known variants."""
     for name in (scene.site, *scene.site_aliases):
         sq = squash(name)
         if sq and sq in ngrams:
             return True
-    sq_site = squash(scene.site)
-    if len(sq_site) >= _MIN_FUZZY_SITE_LEN:
-        return any(
-            abs(len(g) - len(sq_site)) <= 2 and fuzz.ratio(sq_site, g) >= _FUZZY_SITE_MIN
-            for g in ngrams
-        )
     return False
 
 
