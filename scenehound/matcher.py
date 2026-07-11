@@ -1,7 +1,19 @@
 """Scoring of candidate release titles against scene fingerprints.
 
 Pure functions. The two-strong-signal rule and contradiction vetoes are the
-core false-positive defenses — change them only with corpus evidence."""
+core false-positive defenses — change them only with corpus evidence.
+
+Presence detection is boundary-aware to prevent spurious strong signals:
+- Site names match only when aligned to whole token boundaries (squashed
+  contiguous-token n-grams), so a short site like 'Vixen' does not match
+  inside 'Vixens'. A fuzzy typo fallback applies only to sufficiently long
+  site names, using full-string ratio against similar-length n-grams.
+- Performer names match as whole tokens (not raw substrings), so 'Ai' does
+  not match inside 'maintenance'; ultra-short single-token names are ignored.
+- Title counts as a STRONG signal only for a distinctive (>= 2 content token)
+  title whose tokens are all present in the candidate — a generic one-word
+  title cannot become a second strong signal by mere containment.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,7 +22,7 @@ from rapidfuzz import fuzz
 
 from scenehound.dates import extract_dates
 from scenehound.models import SceneFingerprint
-from scenehound.normalize import content_tokens, squash
+from scenehound.normalize import content_tokens, squash, tokenize
 
 STRONG_DATE = 40
 STRONG_SITE = 35
@@ -21,7 +33,10 @@ TITLE_MAX = 25
 SINGLE_SIGNAL_CAP = 65
 _FUZZY_SITE_MIN = 90
 _TITLE_RATIO_GATE = 60
-_TITLE_STRONG_RATIO = 95
+_MIN_FUZZY_SITE_LEN = 8       # only fuzzy-match site names at least this long
+_MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
+_MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a strong signal
+_MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram
 
 
 @dataclass(frozen=True)
@@ -32,17 +47,41 @@ class MatchScore:
     detail: dict[str, float]
 
 
-def _site_in_title(squashed_title: str, scene: SceneFingerprint) -> bool:
-    names = (scene.site, *scene.site_aliases)
-    for name in names:
+def _title_ngrams(title: str) -> frozenset[str]:
+    """Squashed concatenations of every contiguous run of up to _MAX_SITE_TOKENS
+    tokens. A squashed site name matches the title only if it equals one of
+    these boundary-aligned n-grams (never a substring inside a longer token)."""
+    toks = tokenize(title)
+    grams: set[str] = set()
+    for i in range(len(toks)):
+        acc = ""
+        for j in range(i, min(i + _MAX_SITE_TOKENS, len(toks))):
+            acc += toks[j]
+            grams.add(acc)
+    return frozenset(grams)
+
+
+def _site_in_title(ngrams: frozenset[str], scene: SceneFingerprint) -> bool:
+    for name in (scene.site, *scene.site_aliases):
         sq = squash(name)
-        if sq and sq in squashed_title:
+        if sq and sq in ngrams:
             return True
-    # fuzzy fallback for slight misspellings of the primary site name
     sq_site = squash(scene.site)
-    if sq_site and fuzz.partial_ratio(sq_site, squashed_title) >= _FUZZY_SITE_MIN:
-        return True
+    if len(sq_site) >= _MIN_FUZZY_SITE_LEN:
+        return any(
+            abs(len(g) - len(sq_site)) <= 2 and fuzz.ratio(sq_site, g) >= _FUZZY_SITE_MIN
+            for g in ngrams
+        )
     return False
+
+
+def _performer_present(performer: str, cand_tokens: frozenset[str]) -> bool:
+    p_toks = tokenize(performer)
+    if not p_toks:
+        return False
+    if len(p_toks) == 1 and len(p_toks[0]) < _MIN_PERFORMER_TOKEN_LEN:
+        return False
+    return all(t in cand_tokens for t in p_toks)
 
 
 def score(
@@ -50,7 +89,8 @@ def score(
     title: str,
     other_sites: frozenset[str] = frozenset(),
 ) -> MatchScore:
-    squashed = squash(title)
+    ngrams = _title_ngrams(title)
+    cand_tokens = frozenset(tokenize(title))
     detail: dict[str, float] = {}
     strong: list[str] = []
 
@@ -64,31 +104,35 @@ def score(
         return MatchScore(0, (), "date-mismatch", {"date": 0.0})
 
     # --- site ---
-    own_site = _site_in_title(squashed, scene)
-    if own_site:
+    if _site_in_title(ngrams, scene):
         strong.append("site")
         detail["site"] = STRONG_SITE
     else:
         for other in other_sites:
-            if other and other in squashed:
+            if other and other in ngrams:
                 return MatchScore(0, tuple(strong), "site-mismatch", detail)
 
     # --- performers ---
-    hits = sum(1 for p in scene.performers if squash(p) and squash(p) in squashed)
+    hits = sum(1 for p in scene.performers if _performer_present(p, cand_tokens))
     if hits:
         strong.append("performer")
         detail["performer"] = STRONG_PERFORMER + (MULTI_PERFORMER_BONUS if hits > 1 else 0)
 
     # --- title similarity ---
-    scene_tokens = " ".join(content_tokens(scene.title))
-    cand_tokens = " ".join(content_tokens(title))
-    if scene_tokens and cand_tokens:
-        ratio = fuzz.token_set_ratio(scene_tokens, cand_tokens)
-        if ratio >= _TITLE_STRONG_RATIO:
+    scene_ctoks = content_tokens(scene.title)
+    cand_ctoks = content_tokens(title)
+    if scene_ctoks and cand_ctoks:
+        cand_ctok_set = set(cand_ctoks)
+        near_exact = len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS and all(
+            t in cand_ctok_set for t in scene_ctoks
+        )
+        if near_exact:
             strong.append("title")
             detail["title"] = STRONG_TITLE
-        elif ratio >= _TITLE_RATIO_GATE:
-            detail["title"] = ratio / 100.0 * TITLE_MAX
+        else:
+            ratio = fuzz.token_set_ratio(" ".join(scene_ctoks), " ".join(cand_ctoks))
+            if ratio >= _TITLE_RATIO_GATE:
+                detail["title"] = ratio / 100.0 * TITLE_MAX
 
     total = sum(detail.values())
     if len(strong) < 2:

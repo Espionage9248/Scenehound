@@ -77,3 +77,46 @@ def test_two_performers_near_conclusive():
 def test_garbage_scores_zero_ish():
     s = score(SCENE, "Totally.Different.Studio.Random.Clip.720p")
     assert s.confidence < 40
+
+
+def test_generic_one_word_title_is_not_a_strong_signal():
+    scene = SceneFingerprint(10, "That Fetish Girl", (), date(2026, 7, 7), "Casting", ())
+    s = score(scene, "ThatFetishGirl.Casting.Couch.Special.Edition.1080p")
+    assert "title" not in s.strong_signals
+    assert s.confidence < 75
+
+
+def test_date_plus_generic_title_does_not_match():
+    scene = SceneFingerprint(10, "That Fetish Girl", (), date(2026, 7, 7), "Casting", ())
+    s = score(scene, "RandomSite.2026.07.07.Casting.Couch.Amateur.1080p")
+    assert s.confidence < 75
+
+
+def test_short_performer_names_do_not_substring_match():
+    scene = SceneFingerprint(11, "Some Site", (), date(2026, 7, 7), "Whatever", ("Ai", "Bo"))
+    s = score(scene, "SomeOtherStudio.2026.07.07.Maintenance.Training.Bonus.1080p")
+    assert "performer" not in s.strong_signals
+    assert s.confidence < 75
+
+
+def test_short_site_does_not_match_inside_longer_word():
+    scene = SceneFingerprint(12, "Vixen", (), date(2026, 7, 7), "Some Scene", ())
+    s = score(scene, "Brazzers.2026.07.07.Vixens.Live.In.Latex.1080p")
+    assert "site" not in s.strong_signals
+    assert s.confidence < 75
+
+
+def test_distinctive_full_title_still_strong_with_site_no_date():
+    scene = SceneFingerprint(13, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                             "Latex Worship Session", ("Jane Doe",))
+    s = score(scene, "TFG - Latex Worship Session [1080]")
+    assert s.confidence >= 75
+    assert {"site", "title"} <= set(s.strong_signals)
+
+
+def test_distinctive_full_title_still_strong_with_performer_no_date():
+    scene = SceneFingerprint(13, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                             "Latex Worship Session", ("Jane Doe",))
+    s = score(scene, "Jane.Doe.Latex.Worship.Session.720p")
+    assert s.confidence >= 75
+    assert {"performer", "title"} <= set(s.strong_signals)
