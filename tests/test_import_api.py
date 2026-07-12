@@ -71,3 +71,56 @@ def test_webhook_ok_when_completer_absent():
     app.state.import_completer = None
     r = TestClient(app).post("/import/webhook?apikey=shk", json={"eventType": "Grab"})
     assert r.status_code == 200
+
+
+class FakeStore:
+    def __init__(self):
+        self.grabs = []
+
+    def record_grab(self, release_title, download_id):
+        self.grabs.append((release_title, download_id))
+
+
+def _app_with_store(completer, store):
+    app = _app(completer)
+    app.state.scenehound.store = store
+    return app
+
+
+GRAB_PAYLOAD = {
+    "eventType": "Grab",
+    "release": {"releaseTitle": "That Fetish Girl 2026-07-07 Latex 1080p"},
+    "downloadId": "HASH1",
+}
+
+
+def test_webhook_grab_records_and_still_notifies():
+    fc, fs = FakeCompleter(), FakeStore()
+    r = TestClient(_app_with_store(fc, fs)).post(
+        "/import/webhook?apikey=shk", json=GRAB_PAYLOAD)
+    assert r.status_code == 200
+    assert fs.grabs == [("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")]
+    assert fc.notified == 1
+
+
+def test_webhook_grab_download_id_fallback_inside_release():
+    fc, fs = FakeCompleter(), FakeStore()
+    payload = {"eventType": "Grab",
+               "release": {"releaseTitle": "T", "downloadId": "HASH2"}}
+    TestClient(_app_with_store(fc, fs)).post("/import/webhook?apikey=shk", json=payload)
+    assert fs.grabs == [("T", "HASH2")]
+
+
+def test_webhook_grab_without_store_still_ok():
+    fc = FakeCompleter()
+    r = TestClient(_app(fc)).post("/import/webhook?apikey=shk", json=GRAB_PAYLOAD)
+    assert r.status_code == 200
+    assert fc.notified == 1
+
+
+def test_webhook_non_grab_event_does_not_record():
+    fc, fs = FakeCompleter(), FakeStore()
+    TestClient(_app_with_store(fc, fs)).post(
+        "/import/webhook?apikey=shk", json={"eventType": "Download"})
+    assert fs.grabs == []
+    assert fc.notified == 1
