@@ -51,7 +51,8 @@ download. Grab detection therefore comes from **Whisparr's Connect webhook**
 | Tech stack | FastAPI serves one static self-contained HTML page; vanilla JS renders from the JSON endpoint. One rendering path, zero new Python deps. |
 | Isolation & mounting | New isolated router `ui_api.py` (pattern: `import_api.py`), mounted when `ui.enabled`. |
 | Feature flag | **On by default** (`ui.enabled: true`, `SCENEHOUND_UI_ENABLED=false` to disable). Read-only + key-guarded + bounded justifies default-on. |
-| Auth | Existing Scenehound API key as `?apikey=` query param, same as Torznab and webhook routes. |
+| Auth | Existing Scenehound API key guards the **data** endpoint (`?apikey=` query param, same mechanism as Torznab/webhook routes). `GET /ui` serves the static shell unauthenticated — it contains no data and no secrets — so bare links (unraid WebUI button, bookmarks) work; the page prompts once for the key and remembers it (localStorage). |
+| Ports & deployment | **No new port**: the UI rides the existing FastAPI app on 9797 (already `EXPOSE`d/mapped). Dockerfile unchanged; compose example + unraid template updated to point at `/ui` and document the UI env vars. |
 | Bounds | Ring buffer of **50 sessions** (config), **200 candidates/session** cap (config), matched candidates always kept, drop counts recorded. |
 | Redaction | URLs (link/enclosure — they embed the Prowlarr API key) are **never stored**; GUIDs sanitized of `apikey`-style params; config keys never serialized. |
 | Capture scope | Full chain detail for q-bearing searches incl. passthrough fallbacks; RSS syncs stored as one-line summary sessions; Torznab `caps`/auth-failure requests not captured. |
@@ -194,15 +195,16 @@ appears only when Scenehound's import-completer fired the `ManualImport`.
 
 New isolated router, mounted in `app.py` when `config.ui.enabled`.
 
-| Route | Returns |
-|---|---|
-| `GET /ui` | static HTML page (`HTMLResponse`; package resource `scenehound/static/ui.html`, read once at startup) |
-| `GET /ui/api/sessions` | JSON `{sessions: [...], unmatched_grabs: [...], index: {size, age_seconds}}`, newest first |
+| Route | Auth | Returns |
+|---|---|---|
+| `GET /ui` | none (static shell, no data/secrets) | static HTML page (`HTMLResponse`; package resource `scenehound/static/ui.html`, read once at startup) |
+| `GET /ui/api/sessions` | `apikey` query param vs `config.api_key`, 401 on mismatch (same mechanism as Torznab/webhook) | JSON `{sessions: [...], unmatched_grabs: [...], index: {size, age_seconds}}`, newest first |
 
-Both routes check `apikey` query param against `config.api_key` (401 on mismatch),
-identical to the Torznab and webhook routes. The page's JS reads `apikey` from
-`location.search` and appends it to every poll; the key is never embedded in page
-content.
+Key handling in the page's JS: use `?apikey=` from `location.search` if present,
+else localStorage; else render a one-time key input, verify with a probe fetch,
+and persist to localStorage. A 401 on any poll (key rotated) clears the stored
+key and re-prompts. The key is never embedded in page content served by the
+server.
 
 ## Page (single static HTML, inline CSS + ~150 lines vanilla JS)
 
@@ -250,6 +252,25 @@ ui:
   max_candidates: 200    # SCENEHOUND_UI_MAX_CANDIDATES
 ```
 
+## Deployment artifacts (port & template updates)
+
+The UI is served by the same uvicorn process on the **existing port 9797** — no
+new internal port, no second server. Explicit changes:
+
+- **Dockerfile**: no functional change (`EXPOSE 9797` already covers the UI; the
+  `/healthz` HEALTHCHECK stays). A comment notes the port now also serves `/ui`.
+- **docker-compose.example.yml**: comment on the existing `9797:9797` mapping that
+  the web UI lives at `http://<host>:9797/ui`; add commented-out
+  `SCENEHOUND_UI_ENABLED` / `SCENEHOUND_UI_MAX_SESSIONS` env lines alongside the
+  import-completer block.
+- **unraid/scenehound.xml**: `<WebUI>` changes from `/healthz` to
+  `http://[IP]:[PORT:9797]/ui` (works unauthenticated as a shell; the page prompts
+  for the API key once). The port `<Config>` description updates from "Torznab
+  endpoint port" to mention the web UI; add an advanced `SCENEHOUND_UI_ENABLED`
+  variable.
+- **README**: new "Web UI" section — URL, key prompt behavior, On-Grab checkbox
+  for grab tracking, env vars.
+
 ## Redaction
 
 1. `CandidateTrace` stores no URLs: `link` / `enclosure` (which embed the Prowlarr
@@ -277,8 +298,9 @@ ui:
   assert the committed session (variants fired/deferred, candidate scores, outcome);
   each passthrough `fallback_reason`; RSS summary shape; `ui.enabled=false` →
   store stays empty and search results byte-identical.
-- `test_ui_api.py` — 401 without/with wrong apikey on both routes; HTML served;
-  JSON shape (newest-first, index block); routes absent when disabled.
+- `test_ui_api.py` — `/ui` serves HTML with no key; `/ui/api/sessions` 401s
+  without/with wrong apikey and serves JSON with the right one; JSON shape
+  (newest-first, index block); routes absent when disabled.
 - `test_import_api.py` / wiring additions — `Grab` records a grab AND still rings
   the completer; `Test` ignored; webhook mounted with UI on + completer off;
   completer fire reaches `record_import`.
