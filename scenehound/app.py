@@ -16,6 +16,8 @@ from scenehound.api import AppState, IndexHolder, router
 from scenehound.clients.prowlarr import ProwlarrClient
 from scenehound.clients.whisparr import WhisparrClient
 from scenehound.config import load_config
+from scenehound.import_api import import_router
+from scenehound.import_completer import ImportCompleter
 from scenehound.rate_limiter import TokenBucket
 from scenehound.wanted_index import WantedIndex
 
@@ -95,6 +97,17 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             whisparr = WhisparrClient(
                 config.whisparr.url, config.whisparr.api_key, http_client
             )
+            completer_task = None
+            if config.import_completer.enabled:
+                completer = ImportCompleter(
+                    whisparr, state.index_holder, config.import_completer
+                )
+                app.state.import_completer = completer
+                completer_task = asyncio.create_task(completer.run())
+                log.info(
+                    "import-completer enabled dry_run=%s multipack=%s",
+                    config.import_completer.dry_run, config.import_completer.multipack,
+                )
             task = asyncio.create_task(refresh_loop(state, whisparr))
             log.info(
                 "scenehound started indexers=%s threshold=%d",
@@ -106,8 +119,14 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+                if completer_task is not None:
+                    completer_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await completer_task
 
     app = FastAPI(lifespan=lifespan)
     app.include_router(router)
+    if config.import_completer.enabled:
+        app.include_router(import_router)
     app.state.scenehound = state
     return app
