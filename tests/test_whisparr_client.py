@@ -7,6 +7,66 @@ import httpx
 from scenehound.clients.whisparr import WhisparrClient, scene_from_record
 from scenehound.matcher import score
 
+
+async def test_fetch_queue_pages_and_returns_raw_records():
+    pages = {
+        1: {"page": 1, "pageSize": 2, "totalRecords": 3,
+            "records": [{"downloadId": "A"}, {"downloadId": "B"}]},
+        2: {"page": 2, "pageSize": 2, "totalRecords": 3,
+            "records": [{"downloadId": "C"}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert "/api/v3/queue" in str(request.url)
+        return httpx.Response(200, json=pages[int(dict(request.url.params)["page"])])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as hc:
+        recs = await WhisparrClient("http://w:6969", "k", hc).fetch_queue()
+    assert [r["downloadId"] for r in recs] == ["A", "B", "C"]
+
+
+async def test_fetch_manual_import_sends_download_id():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "/api/v3/manualimport" in str(request.url)
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json=[{"path": "/x.mp4"}])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as hc:
+        out = await WhisparrClient("http://w:6969", "k", hc).fetch_manual_import("HASH1")
+    assert seen["downloadId"] == "HASH1"
+    assert seen["filterExistingFiles"] == "true"
+    assert out == [{"path": "/x.mp4"}]
+
+
+async def test_fetch_movie_returns_object():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url).endswith("/api/v3/movie/42")
+        return httpx.Response(200, json={"id": 42, "monitored": True, "hasFile": False})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as hc:
+        movie = await WhisparrClient("http://w:6969", "k", hc).fetch_movie(42)
+    assert movie["monitored"] is True and movie["hasFile"] is False
+
+
+async def test_post_manual_import_builds_command_body():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert str(request.url).endswith("/api/v3/command")
+        captured.update(json.loads(request.content))
+        return httpx.Response(201, json={"id": 1})
+
+    files = [{"path": "/dl/a.mp4", "movieId": 7}]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as hc:
+        await WhisparrClient("http://w:6969", "k", hc).post_manual_import(files)
+    assert captured["name"] == "ManualImport"
+    assert captured["importMode"] == "copy"
+    assert captured["files"] == files
+
 SAMPLE = {
     "id": 12225,
     "title": "Zuzu Sweet | Fatal Temptaion",
