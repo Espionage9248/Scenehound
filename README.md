@@ -43,29 +43,16 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
 
 ## Install (Unraid)
 
-Scenehound is published as a container image on GHCR by CI on every push to
-`main`:
+The image is on GHCR: `ghcr.io/espionage9248/scenehound:latest`.
 
-    ghcr.io/espionage9248/scenehound:latest
+Copy `unraid/scenehound.xml` onto the flash drive at
+`/boot/config/plugins/dockerMan/templates-user/my-scenehound.xml`, then
+**Add Container → Template → scenehound** (under *User templates*). Fill in the
+Whisparr/Prowlarr URLs and API keys (template env vars) and Apply — Unraid pulls
+the image from GHCR.
 
-Once the **package** is public (Package settings → *Change package visibility* →
-Public — this is a separate toggle from the repo's own visibility), Unraid pulls
-it with no authentication. If you keep the package private, authenticate the
-Unraid host's Docker to GHCR first (a Personal Access Token with `read:packages`):
-
-    echo <PAT-with-read:packages> | docker login ghcr.io -u <github-username> --password-stdin
-
-**Add the template.** Unraid only lists templates that live on the flash drive —
-you can't point it at a template URL. Copy `unraid/scenehound.xml` onto the USB:
-
-    /boot/config/plugins/dockerMan/templates-user/my-scenehound.xml
-
-Then **Add Container → Template → scenehound** (under *User templates*). Fill in
-the Whisparr/Prowlarr URLs and API keys (they're template env vars, not the
-config file) and Apply — Unraid pulls the image from GHCR.
-
-**Config.** Create `/mnt/user/appdata/scenehound/config.yaml` with just your
-indexers (URLs + API keys come from the template env vars, not this file):
+Create `/mnt/user/appdata/scenehound/config.yaml` with just your indexers (URLs
+and API keys come from the template env vars, not this file):
 
     indexers:
       - slug: empornium        # -> http://SERVER:9797/indexer/empornium/api
