@@ -21,7 +21,7 @@ jobs:
     name: Test (pytest, py3.12)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -35,7 +35,7 @@ jobs:
     name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Audits the declared dependency tree for known CVEs. Runs independently of
       # the image build so an unfixable transitive advisory surfaces loudly without
       # blocking image delivery.
@@ -51,7 +51,7 @@ jobs:
       contents: read
       packages: write   # push to GHCR using the built-in GITHUB_TOKEN (no secrets needed)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # GHCR requires a lowercase path; github.repository ("Espionage9248/Scenehound")
       # is mixed-case, so lowercase it once here and reuse everywhere.
