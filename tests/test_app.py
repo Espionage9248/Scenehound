@@ -101,3 +101,57 @@ async def test_refresh_failure_keeps_old_index(tmp_path):
         await asyncio.sleep(0.1)
         task.cancel()
     assert state.index_holder.current is old
+
+
+def _paths(app):
+    # FastAPI's lazy routing wraps each include_router() call in an
+    # _IncludedRouter with no .path attribute; the real per-route paths only
+    # show up via effective_route_contexts(). Fall back to that when a route
+    # in app.routes has no .path of its own.
+    paths = set()
+    for r in app.routes:
+        if hasattr(r, "path"):
+            paths.add(r.path)
+        elif hasattr(r, "effective_route_contexts"):
+            for ctx in r.effective_route_contexts():
+                paths.add(ctx.path)
+    return paths
+
+
+def test_ui_enabled_by_default_mounts_routes_and_store(tmp_path):
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    app = create_app(config_dir=tmp_path)
+    assert app.state.scenehound.store is not None
+    assert app.state.scenehound.store.max_candidates == 200
+    assert {"/ui", "/ui/api/sessions", "/import/webhook"} <= _paths(app)
+
+
+def test_ui_disabled_no_routes_no_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCENEHOUND_UI_ENABLED", "false")
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    app = create_app(config_dir=tmp_path)
+    assert app.state.scenehound.store is None
+    paths = _paths(app)
+    assert "/ui" not in paths and "/ui/api/sessions" not in paths
+    # import-completer is off by default, so the webhook vanishes too
+    assert "/import/webhook" not in paths
+
+
+def test_webhook_mounted_for_ui_even_without_completer(tmp_path):
+    # ui on (default) + completer off (default) -> webhook still mounted so
+    # Grab events reach the store.
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    app = create_app(config_dir=tmp_path)
+    assert "/import/webhook" in _paths(app)
+
+
+async def test_completer_gets_the_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCENEHOUND_IMPORT_ENABLED", "true")
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    app = create_app(config_dir=tmp_path)
+    # Enter lifespan so the completer is constructed, then check the wiring.
+    from fastapi.testclient import TestClient
+    with TestClient(app):
+        completer = app.state.import_completer
+        assert completer._store is app.state.scenehound.store
+        assert completer._store is not None

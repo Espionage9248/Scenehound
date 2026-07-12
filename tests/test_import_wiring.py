@@ -20,9 +20,12 @@ def _write(tmp_path, extra=""):
     return tmp_path
 
 
-def test_disabled_serves_no_webhook_route(tmp_path):
+def test_disabled_serves_no_webhook_route(tmp_path, monkeypatch):
     # Route absence is checked by behavior (404), robust across FastAPI versions
     # that nest included routers rather than flattening app.routes.
+    # The webhook also serves the UI's Grab events, so the UI (on by default)
+    # must be off too: everything off -> no webhook route.
+    monkeypatch.setenv("SCENEHOUND_UI_ENABLED", "false")
     app = create_app(config_dir=_write(tmp_path))  # import_completer absent -> disabled
     r = TestClient(app).post("/import/webhook?apikey=wk", json={"eventType": "Test"})
     assert r.status_code == 404
