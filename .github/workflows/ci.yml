@@ -84,7 +84,7 @@ jobs:
       # Dockerfile) since fork PRs can't and shouldn't push packages.
       - name: Build & push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64   # Unraid is x86; add linux/arm64 here if ever needed
