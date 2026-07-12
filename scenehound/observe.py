@@ -156,6 +156,9 @@ class SessionStore:
     def add(self, session: SearchSession) -> None:
         self._sessions.appendleft(session)
 
+    def recorder(self, slug: str, threshold: int, raw_query: str) -> "Recorder":
+        return Recorder(self, slug, threshold, raw_query)
+
     def snapshot(self) -> dict:
         def _to_json_safe(obj):
             """Recursively convert tuples to lists for JSON serialization."""
@@ -179,3 +182,162 @@ class SessionStore:
             except Exception:
                 log.exception("observe: snapshot skipped a bad grab")
         return {"sessions": sessions, "unmatched_grabs": grabs}
+
+
+class Recorder:
+    """Accumulates one request's trace; commit() files it exactly once.
+
+    Every public method is _shielded: the search path calls these inline, so
+    they must be incapable of raising.
+    """
+
+    def __init__(self, store: SessionStore, slug: str, threshold: int, raw_query: str) -> None:
+        self._store = store
+        self._slug = slug
+        self._threshold = threshold
+        self._raw_query = raw_query
+        self._started = time.time()
+        self._kind = "search" if raw_query else "rss"
+        self._parsed_site: str | None = None
+        self._parsed_dates: tuple[str, ...] = ()
+        self._scenes: tuple[SceneRef, ...] = ()
+        self._planned: list[str] = []
+        self._fired: dict[str, int] = {}      # query -> result_count (insertion-ordered)
+        self._cands: list[CandidateTrace] = []
+        self._fallback: str | None = None
+        self._notes: list[str] = []
+        self._error: str | None = None
+        self._items_total = 0
+        self._rewritten = 0
+        self._passthrough_count: int | None = None
+        self._committed = False
+
+    @_shielded
+    def query(self, parsed, scenes) -> None:
+        if parsed is not None:
+            self._parsed_site = parsed.site_token
+            self._parsed_dates = tuple(d.isoformat() for d in parsed.dates)
+        self._scenes = tuple(SceneRef.from_scene(s) for s in scenes)
+
+    @_shielded
+    def fallback(self, reason: str) -> None:
+        self._kind = "passthrough"
+        self._fallback = reason
+
+    @_shielded
+    def variants_planned(self, queries) -> None:
+        self._planned = list(queries)
+
+    @_shielded
+    def variant_fired(self, query: str, result_count: int) -> None:
+        self._fired[query] = result_count
+
+    @_shielded
+    def note(self, text: str) -> None:
+        self._notes.append(text)
+
+    @_shielded
+    def scored(self, items) -> None:
+        # items: iterable of (ReleaseCandidate, SceneFingerprint, MatchScore,
+        # rewritten_title | None). URLs (link/enclosure) are deliberately never
+        # read: they embed the Prowlarr API key.
+        for cand, scene, ms, rewritten in items:
+            self._cands.append(CandidateTrace(
+                title=cand.title,
+                guid=_sanitize(cand.guid),
+                size=cand.size,
+                seeders=cand.seeders,
+                scene_id=scene.scene_id,
+                confidence=ms.confidence,
+                strong_signals=ms.strong_signals,
+                veto=ms.veto,
+                detail=dict(ms.detail),
+                matched=ms.confidence >= self._threshold,
+                rewritten_title=rewritten,
+            ))
+
+    @_shielded
+    def passthrough_results(self, count: int) -> None:
+        self._kind = "passthrough"
+        self._passthrough_count = count
+
+    @_shielded
+    def rss_summary(self, items_total: int, matched) -> None:
+        self._kind = "rss"
+        self._items_total = items_total
+        self.scored(matched)
+        self._rewritten = len(self._cands)
+
+    @_shielded
+    def error(self, text: str) -> None:
+        self._error = text
+
+    @_shielded
+    def commit(self) -> None:
+        if self._committed:
+            return
+        self._committed = True
+        cands = sorted(self._cands, key=lambda c: -c.confidence)
+        cap = self._store.max_candidates
+        dropped = 0
+        if len(cands) > cap:
+            # Matched candidates always survive the cap; non-matched fill the rest.
+            keep = [c for c in cands if c.matched]
+            keep += [c for c in cands if not c.matched][: max(0, cap - len(keep))]
+            dropped = len(cands) - len(keep)
+            cands = sorted(keep, key=lambda c: -c.confidence)
+        matched_count = sum(1 for c in cands if c.matched)
+        variants = tuple(
+            [VariantTrace(q, True, n) for q, n in self._fired.items()]
+            + [VariantTrace(q, False, None) for q in self._planned if q not in self._fired]
+        )
+        notes = list(self._notes)
+        if self._error is not None:
+            status = "error"
+            notes.append(self._error)
+        elif self._kind == "rss":
+            status = "rss-summary"
+        elif self._kind == "passthrough":
+            # Passthrough returns Prowlarr's results verbatim; "matched" here
+            # means "returned something", per the spec.
+            matched_count = self._passthrough_count or 0
+            status = "matched" if matched_count else "empty"
+        else:
+            status = "matched" if matched_count else "empty"
+        self._store.add(SearchSession(
+            session_id=self._store.next_id(),
+            started_at=self._started,
+            finished_at=time.time(),
+            slug=self._slug,
+            kind=self._kind,
+            raw_query=self._raw_query,
+            threshold=self._threshold,
+            parsed_site=self._parsed_site,
+            parsed_dates=self._parsed_dates,
+            scenes=self._scenes,
+            variants=variants,
+            candidates=tuple(cands),
+            dropped_candidates=dropped,
+            outcome=Outcome(status=status, matched_count=matched_count,
+                            items_total=self._items_total, rewritten=self._rewritten),
+            fallback_reason=self._fallback,
+            notes=tuple(notes),
+        ))
+
+
+class NullRecorder:
+    """Shared no-op stand-in when the UI is disabled: zero work, zero state."""
+
+    def query(self, parsed, scenes) -> None: ...
+    def fallback(self, reason) -> None: ...
+    def variants_planned(self, queries) -> None: ...
+    def variant_fired(self, query, result_count) -> None: ...
+    def note(self, text) -> None: ...
+    def scored(self, items) -> None: ...
+    def passthrough_results(self, count) -> None: ...
+    def rss_summary(self, items_total, matched) -> None: ...
+    def error(self, text) -> None: ...
+    def commit(self) -> None: ...
+
+
+NULL_RECORDER = NullRecorder()
