@@ -10,14 +10,14 @@
   <Project>https://github.com/Espionage9248/Scenehound</Project>
   <Overview>Torznab matching proxy between Whisparr and Prowlarr. Identifies badly-named scene releases on private trackers using Whisparr's own metadata and returns them with canonical titles Whisparr can parse. Add Scenehound's per-tracker endpoints to Whisparr as Torznab indexers; searches and RSS flow through unchanged otherwise.</Overview>
   <Category>Downloaders: Tools:</Category>
-  <WebUI>http://[IP]:[PORT:9797]/healthz</WebUI>
+  <WebUI>http://[IP]:[PORT:9797]/ui</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/Espionage9248/Scenehound/main/icons/icon-256.png</Icon>
   <ExtraParams>--restart unless-stopped</ExtraParams>
   <PostArgs/>
   <DonateText/>
   <DonateLink/>
-  <Config Name="WebUI Port" Target="9797" Default="9797" Mode="tcp" Description="Torznab endpoint port" Type="Port" Display="always" Required="true" Mask="false">9797</Config>
+  <Config Name="WebUI Port" Target="9797" Default="9797" Mode="tcp" Description="Torznab endpoints and web UI (/ui)" Type="Port" Display="always" Required="true" Mask="false">9797</Config>
   <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/scenehound" Mode="rw" Description="Holds config.yaml and the generated API key" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/scenehound</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID that owns /config and runs the service (Unraid default 99 = nobody)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID that owns /config and runs the service (Unraid default 100 = users)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
@@ -27,6 +27,7 @@
   <Config Name="Prowlarr API Key" Target="PROWLARR_API_KEY" Default="" Mode="" Description="Prowlarr Settings > General > API Key" Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Match Threshold" Target="SCENEHOUND_THRESHOLD" Default="75" Mode="" Description="Minimum confidence (0-100) to return a match. Raise if you ever see a wrong grab." Type="Variable" Display="advanced" Required="false" Mask="false">75</Config>
   <Config Name="Log Level" Target="SCENEHOUND_LOG_LEVEL" Default="info" Mode="" Description="info or debug (debug logs per-candidate scoring)" Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+  <Config Name="Web UI Enabled" Target="SCENEHOUND_UI_ENABLED" Default="true" Mode="" Description="Read-only web UI at /ui showing recent searches, match reasons, and grab/import outcomes" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
   <Config Name="Rate Limit Burst" Target="SCENEHOUND_RATE_BURST" Default="4" Mode="" Description="Token bucket burst per indexer" Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
   <Config Name="Rate Limit Refill Seconds" Target="SCENEHOUND_RATE_REFILL" Default="15" Mode="" Description="Seconds per token refill (higher = gentler on trackers)" Type="Variable" Display="advanced" Required="false" Mask="false">15</Config>
 </Container>

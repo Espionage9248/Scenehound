@@ -83,6 +83,38 @@ For each indexer: Settings → Indexers → Add → Torznab:
 Press Test — a green check means the whole chain works. Run one interactive
 search on a monitored scene and watch `docker logs scenehound`.
 
+## Web UI
+
+Scenehound ships a read-only web UI at `http://<host>:9797/ui` (same port as the
+Torznab endpoints) that makes each search legible:
+
+- **Query chain** — what Whisparr asked for, what Scenehound understood, and the
+  query variants sent to Prowlarr (including ones deferred by the rate limiter).
+- **Candidates** — every release Prowlarr returned, with a plain-language
+  explanation of *why* it matched or didn't (signals found, vetoes, confidence
+  vs threshold).
+- **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
+  Whisparr grabs a result and **Imported** when the import-completer lands it.
+
+The page asks for your Scenehound API key once (from `/config/apikey` or
+`SCENEHOUND_API_KEY`) and remembers it in the browser. The page itself contains
+no data; all data comes from an API-key-guarded endpoint.
+
+**Grab tracking** uses Whisparr's Connect webhook (the same one the
+import-completer uses — Settings → Connect → Webhook, URL
+`http://<scenehound>:9797/import/webhook?apikey=<key>`): tick **On Grab** so
+Scenehound hears about grabs. Without it, the outcome ladder stops at
+Matched/Failure.
+
+Everything is held in memory (bounded, most recent ~50 searches) and resets on
+restart. Configuration:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SCENEHOUND_UI_ENABLED` | `true` | Serve the UI and record sessions |
+| `SCENEHOUND_UI_MAX_SESSIONS` | `50` | Ring buffer of recent searches |
+| `SCENEHOUND_UI_MAX_CANDIDATES` | `200` | Max stored candidates per search |
+
 ## Auto-completing held imports (opt-in, off by default)
 
 Some grabs download fine but Whisparr holds them: *"matched to movie by ID —
@@ -101,7 +133,7 @@ background task.
 
 2. In Whisparr → Settings → Connect → add a **Webhook**:
    - URL: `http://SERVER:9797/import/webhook?apikey=<contents of the apikey file>`
-   - Method: `POST`; under Triggers, enable **On Manual Interaction Required**.
+   - Method: `POST`; under Triggers, enable **On Manual Interaction Required** and **On Grab** (the latter additionally feeds the web UI's grab tracking).
    - Press **Test** (Scenehound answers `200`, so the Connect saves), then **Save**.
 
 3. Watch `docker logs -f scenehound`. In dry-run you'll see `DRY-RUN import …`

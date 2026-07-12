@@ -4,7 +4,7 @@ services:
     # build: .   # uncomment (and drop the image tag) to build from source instead
     container_name: scenehound
     ports:
-      - "9797:9797"
+      - "9797:9797"   # Torznab endpoints + web UI: http://<host>:9797/ui
     volumes:
       - ./config:/config
     environment:
@@ -18,4 +18,8 @@ services:
       # - SCENEHOUND_IMPORT_ENABLED=true
       # - SCENEHOUND_IMPORT_DRY_RUN=true
       # - SCENEHOUND_IMPORT_MULTIPACK=true   # phase 2: multi-file packs, all-or-nothing
+      # Web UI (on by default). Shows recent searches, candidates, match
+      # reasons, and grab/import outcomes at http://<host>:9797/ui
+      # - SCENEHOUND_UI_ENABLED=false
+      # - SCENEHOUND_UI_MAX_SESSIONS=50
     restart: unless-stopped
