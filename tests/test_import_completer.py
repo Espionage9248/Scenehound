@@ -110,16 +110,43 @@ def test_plan_phase1_ignores_sample_files():
     assert f["path"] == "/dl/main.mp4"
 
 
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_real_queue_fixture_maps_and_is_by_id_hold():
+    # Captured from live Whisparr eros (sanitized). Locks the parser to reality.
+    data = json.loads((_FIXTURES / "whisparr_queue_sample.json").read_text())
+    (record,) = data["records"]
+    qi = queue_item_from_record(record)
+    assert qi is not None
+    assert qi.movie_id == record["movie"]["id"]   # movieId == embedded movie.id (import target)
+    assert qi.tracked_state == "importBlocked"
+    assert is_by_id_hold(qi) is True
+
+
 def test_real_manualimport_fixture_maps():
-    # Depends on Task 1 capture. Skips cleanly until the fixture exists.
-    fx = Path(__file__).parent / "fixtures" / "whisparr_manualimport_sample.json"
-    if not fx.exists():
-        import pytest
-        pytest.skip("run scripts/probe_whisparr.sh to capture the fixture")
-    data = json.loads(fx.read_text())
+    # The clean single-file by-ID case: pre-populated movie == grabbed movieId,
+    # zero rejections -> phase 1 would import.
+    data = json.loads((_FIXTURES / "whisparr_manualimport_sample.json").read_text())
     records = data if isinstance(data, list) else data.get("records", [])
     items = [manual_import_from_record(r) for r in records]
     assert items, "captured manualimport sample had no candidates"
+    c = items[0]
+    assert c.movie_id == 13503 and c.rejections == ()
+    assert c.item_id == 67318430 and c.monitored is True and c.movie_file_id == 0
+    assert c.quality["quality"]["name"] == "WEBDL-2160p"
+
+
+def test_real_fixtures_end_to_end_plan_phase1_imports():
+    # The captured queue + manualimport together must yield an ActionPlan.
+    q = json.loads((_FIXTURES / "whisparr_queue_sample.json").read_text())
+    m = json.loads((_FIXTURES / "whisparr_manualimport_sample.json").read_text())
+    item = queue_item_from_record(q["records"][0])
+    cands = [manual_import_from_record(r) for r in m]
+    plan = plan_phase1(item, cands, ImportCompleterConfig())
+    assert isinstance(plan, ActionPlan)
+    (f,) = plan.files
+    assert f["movieId"] == 13503 and f["id"] == 67318430 and f["downloadId"] == item.download_id
 
 
 # --- service (sweep / grace / retry / dry-run) ---

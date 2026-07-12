@@ -1,0 +1,84 @@
+{
+    "page": 1,
+    "pageSize": 50,
+    "sortKey": "timeleft",
+    "sortDirection": "descending",
+    "totalRecords": 1,
+    "records": [
+        {
+            "movieId": 13503,
+            "movie": {
+                "title": "Some Scene Title...",
+                "code": "288411",
+                "originalLanguage": {"id": 1, "name": "English"},
+                "sortTitle": "some scene title",
+                "alternateTitles": [],
+                "sizeOnDisk": 0,
+                "status": "released",
+                "overview": "[redacted synopsis]",
+                "releaseDate": "2026-06-28T00:00:00Z",
+                "images": [],
+                "website": "https://example.com/en/video/studio/Some-Scene-Title/288411",
+                "year": 2026,
+                "studioTitle": "Example Studio",
+                "studioForeignId": "00000000-0000-0000-0000-000000000001",
+                "path": "/data/media/library/Example Network/Example Studio/2026-06-28 - Some Scene Title. [00000000-0000-0000-0000-0000000000aa]",
+                "qualityProfileId": 8,
+                "movieFileId": 0,
+                "monitored": true,
+                "isAvailable": true,
+                "folderName": "/data/media/library/Example Network/Example Studio/2026-06-28 - Some Scene Title. [00000000-0000-0000-0000-0000000000aa]",
+                "runtime": 33,
+                "cleanTitle": "somescenetitle",
+                "tmdbId": 0,
+                "foreignId": "00000000-0000-0000-0000-0000000000aa",
+                "stashId": "00000000-0000-0000-0000-0000000000aa",
+                "titleSlug": "00000000-0000-0000-0000-0000000000aa",
+                "genres": ["Lesbian", "Natural Tits"],
+                "tags": [],
+                "added": "2026-06-29T11:06:38Z",
+                "ratings": {},
+                "searchCredits": [],
+                "performerForeignIds": [
+                    "00000000-0000-0000-0000-0000000000b1",
+                    "00000000-0000-0000-0000-0000000000b2"
+                ],
+                "performerNames": ["Performer One", "Performer Two"],
+                "itemType": "scene",
+                "lastSearchTime": "2026-07-11T22:07:05Z",
+                "id": 13503
+            },
+            "languages": [],
+            "quality": {
+                "quality": {"id": 18, "name": "WEBDL-2160p", "source": "web", "resolution": 2160},
+                "revision": {"version": 1, "real": 0, "isRepack": false}
+            },
+            "customFormats": [],
+            "customFormatScore": 0,
+            "size": 1215741146,
+            "title": "NetworkStudio_SomeSceneTitle_2160p_h265.mp4",
+            "estimatedCompletionTime": "2026-07-12T01:19:55Z",
+            "added": "2026-07-11T22:07:07Z",
+            "status": "completed",
+            "trackedDownloadStatus": "warning",
+            "trackedDownloadState": "importBlocked",
+            "statusMessages": [
+                {
+                    "title": "NetworkStudio_SomeSceneTitle_2160p_h265.mp4",
+                    "messages": [
+                        "Found matching movie via grab history, but release was matched to movie by ID. Manual Import required."
+                    ]
+                }
+            ],
+            "downloadId": "0000000000000000000000000000000000000001",
+            "protocol": "torrent",
+            "downloadClient": "qBittorrent",
+            "downloadClientHasPostImportCategory": false,
+            "indexer": "Empornium (Scenehound)",
+            "outputPath": "/data/torrents/library/NetworkStudio_SomeSceneTitle_2160p_h265.mp4",
+            "sizeleft": 0,
+            "timeleft": "00:00:00",
+            "id": 626540586
+        }
+    ]
+}

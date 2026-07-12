@@ -68,6 +68,16 @@ class ManualImportItem:
     rejections: tuple[str, ...]
     is_sample: bool
     size: int
+    # The transient manualimport-session id and indexer flags. Whisparr's own UI
+    # threads these back into the ManualImport command; we mirror it. Import still
+    # works from path+movieId if the id is ignored/stale, so it is belt-and-braces.
+    item_id: int | None = None
+    indexer_flags: int = 0
+    # The candidate's embedded movie carries monitored + movieFileId (NOT hasFile;
+    # this eros fork exposes movieFileId, 0 == no file). Phase 2 reads these to
+    # avoid an extra /movie/{id} fetch when the movie is pre-populated.
+    monitored: bool | None = None
+    movie_file_id: int | None = None
 
 
 def _rejection_strings(raw: list) -> tuple[str, ...]:
@@ -81,11 +91,12 @@ def _rejection_strings(raw: list) -> tuple[str, ...]:
 
 
 def manual_import_from_record(record: dict) -> ManualImportItem:
-    movie = record.get("movie") or None
-    movie_id = int(movie["id"]) if isinstance(movie, dict) and movie.get("id") else None
+    movie = record.get("movie") if isinstance(record.get("movie"), dict) else None
+    movie_id = int(movie["id"]) if movie and movie.get("id") else None
     rejections = _rejection_strings(record.get("rejections", []))
     is_sample = any("sample" in r.lower() for r in rejections)
     langs = tuple(l for l in (record.get("languages") or []) if isinstance(l, dict))
+    item_id = int(record["id"]) if record.get("id") is not None else None
     return ManualImportItem(
         path=str(record.get("path", "")),
         folder_name=str(record.get("folderName", "")),
@@ -96,6 +107,10 @@ def manual_import_from_record(record: dict) -> ManualImportItem:
         rejections=rejections,
         is_sample=is_sample,
         size=int(record.get("size", 0)),
+        item_id=item_id,
+        indexer_flags=int(record.get("indexerFlags", 0) or 0),
+        monitored=bool(movie["monitored"]) if movie and "monitored" in movie else None,
+        movie_file_id=int(movie["movieFileId"]) if movie and movie.get("movieFileId") is not None else None,
     )
 
 
@@ -120,14 +135,19 @@ def _file_entry(path: str, movie_id: int, cand: ManualImportItem, download_id: s
     # Quality / languages / releaseGroup are taken VERBATIM from Whisparr's own
     # candidate parse — we never second-guess the file. downloadId associates the
     # import with the tracked download so it clears and downstream import events fire.
-    return {
+    # id/indexerFlags mirror what Whisparr's UI threads back into the command.
+    entry = {
         "path": path,
         "movieId": movie_id,
         "quality": cand.quality,
         "languages": list(cand.languages),
         "releaseGroup": cand.release_group,
         "downloadId": download_id,
+        "indexerFlags": cand.indexer_flags,
     }
+    if cand.item_id is not None:
+        entry["id"] = cand.item_id
+    return entry
 
 
 def plan_phase1(
