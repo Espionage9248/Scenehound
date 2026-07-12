@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 
 from scenehound.config import ImportCompleterConfig
+from scenehound.matcher import score
 
 log = logging.getLogger("scenehound.import_completer")
 
@@ -166,6 +168,84 @@ def plan_phase1(
     return ActionPlan(files=(_file_entry(cand.path, cand.movie_id, cand, item.download_id),))
 
 
+@dataclass(frozen=True)
+class FileMatch:
+    path: str
+    cand: "ManualImportItem"
+    movie_id: int | None
+    verdict: str  # "matched" | "unmatched" | "ambiguous"
+
+
+@dataclass(frozen=True)
+class PackMatch:
+    files: tuple[FileMatch, ...]
+
+    @property
+    def fully_matched(self) -> bool:
+        # All-or-nothing: an empty pack or ANY non-matched file blocks the whole pack.
+        return bool(self.files) and all(f.verdict == "matched" for f in self.files)
+
+    @property
+    def matched_movie_ids(self) -> frozenset[int]:
+        return frozenset(f.movie_id for f in self.files if f.movie_id is not None)
+
+
+def _match_one(
+    cand: ManualImportItem, item: QueueItem, index, config: ImportCompleterConfig
+) -> FileMatch:
+    # A movie Whisparr pre-populated is trusted ONLY when it equals the grabbed
+    # movieId (never a foreign by-ID guess we didn't make).
+    if cand.movie_id is not None:
+        verdict = "matched" if cand.movie_id == item.movie_id else "unmatched"
+        return FileMatch(cand.path, cand, cand.movie_id if verdict == "matched" else None, verdict)
+    # Score the BASENAME, not the absolute path: leading dirs ("data", "torrents",
+    # "library") are junk tokens that could fabricate a spurious site n-gram.
+    name = os.path.basename(cand.path) or cand.path
+    scored = []
+    for scene in index.candidates_for_title(name):
+        s = score(scene, name, other_sites=index.other_sites_for(scene))
+        scored.append((s.confidence, bool(s.strong_signals), scene.scene_id))
+    scored.sort(key=lambda t: -t[0])
+    if not scored or scored[0][0] < config.import_threshold or not scored[0][1]:
+        return FileMatch(cand.path, cand, None, "unmatched")
+    runner_up = scored[1][0] if len(scored) > 1 else 0
+    if scored[0][0] - runner_up < config.ambiguity_margin:
+        return FileMatch(cand.path, cand, None, "ambiguous")
+    return FileMatch(cand.path, cand, scored[0][2], "matched")  # scene_id == movieId
+
+
+def match_pack(
+    item: QueueItem, candidates: list[ManualImportItem], index, config: ImportCompleterConfig
+) -> PackMatch:
+    videos = [c for c in candidates if not c.is_sample]
+    return PackMatch(tuple(_match_one(c, item, index, config) for c in videos))
+
+
+def finalize_pack(
+    item: QueueItem,
+    pack: PackMatch,
+    movie_states: dict[int, tuple[bool, bool]],
+    config: ImportCompleterConfig,
+) -> ActionPlan | Skip:
+    # movie_states: movie_id -> (monitored, has_file). The has_file derivation
+    # (movieFileId on this eros fork) happens in the SERVICE; this stays HTTP-free.
+    if not pack.fully_matched:
+        verdicts = {f.path: f.verdict for f in pack.files if f.verdict != "matched"}
+        return Skip(f"pack-not-fully-matched {verdicts}")
+    for mid in pack.matched_movie_ids:
+        # Default to (not-monitored, has-file) so a missing state fails SAFE (skip).
+        monitored, has_file = movie_states.get(mid, (False, True))
+        if not monitored:
+            return Skip(f"movie-not-monitored ({mid})")
+        if has_file:
+            return Skip(f"movie-hasfile-already ({mid})")
+    files = tuple(
+        _file_entry(f.path, f.movie_id, f.cand, item.download_id)
+        for f in pack.files
+    )
+    return ActionPlan(files=files)
+
+
 @dataclass
 class SweepSummary:
     acted: int = 0
@@ -282,4 +362,28 @@ class ImportCompleter:
     async def _plan_phase2(
         self, item: QueueItem, candidates: list[ManualImportItem]
     ) -> "ActionPlan | Skip":
-        return Skip("phase2-not-implemented")  # replaced in Task 7
+        index = self._index_holder.current
+        if index is None:
+            return Skip("no-wanted-index")
+        pack = match_pack(item, candidates, index, self._config)
+        if not pack.fully_matched:
+            # Log the per-file verdict table so the manual fallback is a checkbox job.
+            table = [(f.path, f.verdict, f.movie_id) for f in pack.files]
+            log.info("pack blocked download_id=%s verdicts=%s", item.download_id, table)
+            return finalize_pack(item, pack, {}, self._config)
+        # Reuse embedded movie state where Whisparr PRE-POPULATED it (cand.movie_id
+        # is set) — no fetch needed. For scorer-matched movies (cand.movie_id is None,
+        # we assigned scene_id), fetch each missing movie_id at most once. This eros
+        # fork exposes movieFileId (0 == no file), NOT hasFile.
+        movie_states: dict[int, tuple[bool, bool]] = {
+            f.movie_id: (bool(f.cand.monitored), bool(f.cand.movie_file_id))
+            for f in pack.files
+            if f.movie_id is not None and f.cand.movie_id is not None
+        }
+        for mid in pack.matched_movie_ids:
+            if mid in movie_states:
+                continue
+            movie = await self._client.fetch_movie(mid)
+            has_file = bool(movie.get("hasFile")) or bool(movie.get("movieFileId"))
+            movie_states[mid] = (bool(movie.get("monitored")), has_file)
+        return finalize_pack(item, pack, movie_states, self._config)

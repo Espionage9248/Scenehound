@@ -263,3 +263,154 @@ async def test_notify_sets_wake_event():
     assert not ic._wake.is_set()
     ic.notify()
     assert ic._wake.is_set()
+
+
+# --- phase 2: pure pack-matching decision functions ---
+
+from datetime import date
+
+from scenehound.models import SceneFingerprint
+from scenehound.import_completer import FileMatch, PackMatch, finalize_pack, match_pack
+
+
+def _index(*scenes):
+    return WantedIndex(list(scenes))
+
+
+SCENE_A = SceneFingerprint(101, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                           "Latex Worship Session", ("Jane Doe",))
+SCENE_B = SceneFingerprint(102, "That Fetish Girl", ("TFG",), date(2026, 7, 8),
+                           "Rubber Gloves", ("Mary Major",))
+
+
+def _packcand(path, movie=None):
+    return manual_import_from_record({
+        "path": path, "folderName": "TFG.Pack", "movie": movie,
+        "quality": {"quality": {"id": 3}}, "languages": [{"id": 1}],
+        "releaseGroup": "GRP", "rejections": [], "size": 5_000_000_000,
+    })
+
+
+def test_match_pack_all_matched_via_scoring():
+    cands = [
+        _packcand("TFG.26.07.07.Latex.Worship.Session.Jane.Doe.1080p.mp4"),
+        _packcand("TFG.26.07.08.Rubber.Gloves.Mary.Major.1080p.mp4"),
+    ]
+    pack = match_pack(queue_item_from_record(BY_ID), cands, _index(SCENE_A, SCENE_B),
+                      ImportCompleterConfig(import_threshold=75))
+    assert pack.fully_matched
+    assert pack.matched_movie_ids == frozenset({101, 102})
+
+
+def test_match_pack_unmatched_file_blocks_pack():
+    cands = [
+        _packcand("TFG.26.07.07.Latex.Worship.Session.Jane.Doe.1080p.mp4"),
+        _packcand("Totally.Unknown.Release.2019.720p.mp4"),
+    ]
+    pack = match_pack(queue_item_from_record(BY_ID), cands, _index(SCENE_A, SCENE_B),
+                      ImportCompleterConfig(import_threshold=75))
+    assert not pack.fully_matched
+    assert any(f.verdict == "unmatched" for f in pack.files)
+
+
+def test_match_pack_ambiguous_when_margin_too_thin():
+    # Two same-day scenes, filename carries only site+date -> both score equal,
+    # margin below ambiguity_margin -> ambiguous, pack blocked.
+    twin = SceneFingerprint(103, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                            "Different Title", ("Someone Else",))
+    cands = [_packcand("TFG.26.07.07.1080p.mp4")]
+    pack = match_pack(queue_item_from_record(BY_ID), cands, _index(SCENE_A, twin),
+                      ImportCompleterConfig(import_threshold=60, ambiguity_margin=10))
+    assert not pack.fully_matched
+    assert pack.files[0].verdict == "ambiguous"
+
+
+def test_match_pack_prepopulated_movie_counts_only_if_grabbed_id():
+    good = _packcand("weird.name.mp4", movie={"id": 7})   # == BY_ID movieId
+    pack = match_pack(queue_item_from_record(BY_ID), [good], _index(),
+                      ImportCompleterConfig())
+    assert pack.fully_matched and pack.matched_movie_ids == frozenset({7})
+
+    bad = _packcand("weird.name.mp4", movie={"id": 999})  # foreign movie -> not trusted
+    pack2 = match_pack(queue_item_from_record(BY_ID), [bad], _index(),
+                       ImportCompleterConfig())
+    assert not pack2.fully_matched
+
+
+def test_finalize_pack_requires_monitored_and_no_file():
+    cands = [_packcand("TFG.26.07.07.Latex.Worship.Session.Jane.Doe.1080p.mp4")]
+    item = queue_item_from_record(BY_ID)
+    pack = match_pack(item, cands, _index(SCENE_A), ImportCompleterConfig(import_threshold=75))
+    ok = finalize_pack(item, pack, {101: (True, False)}, ImportCompleterConfig())
+    assert isinstance(ok, ActionPlan) and ok.files[0]["movieId"] == 101
+
+    has_file = finalize_pack(item, pack, {101: (True, True)}, ImportCompleterConfig())
+    assert isinstance(has_file, Skip) and "hasfile" in has_file.reason.lower()
+
+    unmonitored = finalize_pack(item, pack, {101: (False, False)}, ImportCompleterConfig())
+    assert isinstance(unmonitored, Skip) and "monitor" in unmonitored.reason.lower()
+
+
+def test_finalize_pack_skips_when_not_fully_matched():
+    item = queue_item_from_record(BY_ID)
+    pack = PackMatch(files=(FileMatch("/x.mp4", _packcand("/x.mp4"), None, "unmatched"),))
+    out = finalize_pack(item, pack, {}, ImportCompleterConfig())
+    assert isinstance(out, Skip)
+
+
+# --- phase 2: service integration (sweep -> match_pack -> /movie -> one command) ---
+
+_PACK_TWO = [
+    {"path": "TFG.26.07.07.Latex.Worship.Session.Jane.Doe.1080p.mp4", "movie": None,
+     "quality": {"quality": {"id": 3}}, "languages": [{"id": 1}], "rejections": []},
+    {"path": "TFG.26.07.08.Rubber.Gloves.Mary.Major.1080p.mp4", "movie": None,
+     "quality": {"quality": {"id": 3}}, "languages": [{"id": 1}], "rejections": []},
+]
+
+
+def _phase2_completer(movie_file_id):
+    # Scorer-matched pack (movie: None) => _plan_phase2 fetches /movie/{id}. This
+    # eros fork returns movieFileId (NOT hasFile); 0 == no file, >0 == already has one.
+    posted: list[dict] = []
+
+    def handler(request):
+        url = str(request.url)
+        if "/api/v3/queue" in url:
+            return httpx.Response(200, json=QUEUE_ONE)
+        if "/api/v3/manualimport" in url:
+            return httpx.Response(200, json=_PACK_TWO)
+        if "/api/v3/movie/" in url:
+            mid = int(url.rsplit("/", 1)[1].split("?")[0])
+            return httpx.Response(200, json={"id": mid, "monitored": True,
+                                             "movieFileId": movie_file_id})
+        if url.endswith("/api/v3/command"):
+            posted.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": 1})
+        return httpx.Response(404)
+
+    hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    holder = IndexHolder()
+    holder.set(WantedIndex([SCENE_A, SCENE_B]))
+    ic = ImportCompleter(
+        WhisparrClient("http://w:6969", "k", hc), holder,
+        ImportCompleterConfig(enabled=True, dry_run=False, multipack=True,
+                              grace_seconds=0, import_threshold=75),
+    )
+    return ic, posted
+
+
+async def test_phase2_all_matched_posts_one_batched_command():
+    ic, posted = _phase2_completer(movie_file_id=0)
+    s = await ic.sweep(now=1.0)
+    assert s.acted == 1
+    assert len(posted) == 1  # ONE batched command for the whole pack
+    assert {f["movieId"] for f in posted[0]["files"]} == {101, 102}
+
+
+async def test_phase2_skips_pack_when_a_movie_already_has_file():
+    # A matched movie with movieFileId>0 already has a file -> hasfile guard skips
+    # the WHOLE pack, no ManualImport command is posted.
+    ic, posted = _phase2_completer(movie_file_id=5)
+    s = await ic.sweep(now=1.0)
+    assert s.acted == 0 and s.skipped == 1
+    assert posted == []

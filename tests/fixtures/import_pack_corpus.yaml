@@ -1,0 +1,45 @@
+# Phase-2 pack-filename corpus. Each entry is ONE file from a multi-file torrent.
+# expect: matched => unique scene at/above import_threshold with margin;
+#         unmatched => no confident scene; ambiguous => tie within margin.
+# Real production mispredictions get appended here as regressions. Filenames look
+# like real tracker pack members (studio glued or spaced, YY.MM.DD / YYYY-MM-DD
+# dates, performer tokens, resolution). Scored via match_pack against a small
+# WantedIndex under the DEFAULT ImportCompleterConfig (threshold=90, margin=10).
+- filename: "TFG.26.07.07.Latex.Worship.Session.Jane.Doe.2160p.mp4"
+  scenes:
+    - &tfg_a {scene_id: 101, site: "That Fetish Girl", aliases: ["TFG"],
+             date: 2026-07-07, title: "Latex Worship Session", performers: ["Jane Doe"]}
+  expect: matched
+  expect_scene_id: 101
+
+- filename: "Random.Homemade.Clip.2018.mp4"
+  scenes:
+    - *tfg_a
+  expect: unmatched
+
+# Two scenes shot the same day with the same performer: the file names only
+# site+date+performer, so both clear the threshold and tie within the margin ->
+# ambiguous. All-or-nothing must refuse to guess which movieId to import to.
+- filename: "TFG.26.07.07.Jane.Doe.2160p.mp4"
+  scenes:
+    - {scene_id: 111, site: "That Fetish Girl", aliases: ["TFG"], date: 2026-07-07,
+       title: "Morning Session", performers: ["Jane Doe"]}
+    - {scene_id: 112, site: "That Fetish Girl", aliases: ["TFG"], date: 2026-07-07,
+       title: "Evening Session", performers: ["Jane Doe"]}
+  expect: ambiguous
+
+# Spaced/dashed pack member, YY.MM.DD date, distinctive title + performer -> match.
+- filename: "Blacked - 24.01.15 - Kali Sudhra - Deep Connection - 2160p.mp4"
+  scenes:
+    - &blacked {scene_id: 201, site: "Blacked", aliases: [], date: 2024-01-15,
+               title: "Deep Connection", performers: ["Kali Sudhra"]}
+  expect: matched
+  expect_scene_id: 201
+
+# Same site/performer/title but the file's date contradicts the scene -> the
+# matcher vetoes (date-mismatch), no confident scene -> unmatched. Guards against
+# importing a wrong-day file onto a same-titled scene.
+- filename: "Blacked - 24.02.20 - Kali Sudhra - Deep Connection - 2160p.mp4"
+  scenes:
+    - *blacked
+  expect: unmatched
