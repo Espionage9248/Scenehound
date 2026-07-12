@@ -1,0 +1,15 @@
+# Weekly dependency update PRs. Works on private repos at no cost.
+version: 2
+updates:
+  - package-ecosystem: pip            # runtime + dev deps in pyproject.toml
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions # pins in .github/workflows
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker         # base image in Dockerfile
+    directory: "/"
+    schedule:
+      interval: weekly
