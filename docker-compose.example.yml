@@ -1,7 +1,7 @@
 services:
   scenehound:
-    image: scenehound:latest
-    build: .
+    image: ghcr.io/espionage9248/scenehound:latest
+    # build: .   # uncomment (and drop the image tag) to build from source instead
     container_name: scenehound
     ports:
       - "9797:9797"

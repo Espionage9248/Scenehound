@@ -48,8 +48,10 @@ Scenehound is published as a container image on GHCR by CI on every push to
 
     ghcr.io/espionage9248/scenehound:latest
 
-The package inherits the repo's **private** visibility, so authenticate the
-Unraid host's Docker to GHCR once (a Personal Access Token with `read:packages`):
+Once the **package** is public (Package settings → *Change package visibility* →
+Public — this is a separate toggle from the repo's own visibility), Unraid pulls
+it with no authentication. If you keep the package private, authenticate the
+Unraid host's Docker to GHCR first (a Personal Access Token with `read:packages`):
 
     echo <PAT-with-read:packages> | docker login ghcr.io -u <github-username> --password-stdin
 
