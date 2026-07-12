@@ -6,8 +6,8 @@
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://YOUR_FORGEJO/scenehound/issues</Support>
-  <Project>https://YOUR_FORGEJO/scenehound</Project>
+  <Support>https://github.com/Espionage9248/Scenehound/issues</Support>
+  <Project>https://github.com/Espionage9248/Scenehound</Project>
   <Overview>Torznab matching proxy between Whisparr and Prowlarr. Identifies badly-named scene releases on private trackers using Whisparr's own metadata and returns them with canonical titles Whisparr can parse. Add Scenehound's per-tracker endpoints to Whisparr as Torznab indexers; searches and RSS flow through unchanged otherwise.</Overview>
   <Category>Downloaders: Tools:</Category>
   <WebUI>http://[IP]:[PORT:9797]/healthz</WebUI>
