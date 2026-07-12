@@ -65,3 +65,10 @@ def test_sessions_empty_when_store_none():
     r = TestClient(_app(store=None)).get("/ui/api/sessions?apikey=shk")
     assert r.status_code == 200
     assert r.json()["sessions"] == []
+
+
+def test_ui_page_has_app_markers():
+    r = TestClient(_app()).get("/ui")
+    for marker in ('id="sessions"', 'id="keyform"', 'id="indexinfo"',
+                   "scenehound_apikey", "/ui/api/sessions"):
+        assert marker in r.text, marker

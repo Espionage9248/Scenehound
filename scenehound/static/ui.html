@@ -4,9 +4,270 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scenehound</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #14161a; color: #d7dae0;
+       font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+         padding: .8rem 1.2rem; background: #1b1e24; border-bottom: 1px solid #2a2e36;
+         position: sticky; top: 0; }
+header h1 { font-size: 1.05rem; margin: 0; letter-spacing: .04em; }
+header .meta { color: #8b93a1; font-size: .85rem; }
+#polldot { display: inline-block; width: .55em; height: .55em; border-radius: 50%;
+           background: #4caf7d; margin-right: .35em; }
+#polldot.err { background: #e2574f; }
+main { padding: 1rem 1.2rem 3rem; max-width: 1100px; margin: 0 auto; }
+#keyform { margin: 2rem auto; max-width: 26rem; background: #1b1e24;
+           border: 1px solid #2a2e36; border-radius: 8px; padding: 1.2rem; }
+#keyform input { width: 100%; padding: .5rem; border-radius: 5px;
+                 border: 1px solid #3a3f4a; background: #101216; color: inherit; }
+#keyform button { margin-top: .7rem; padding: .45rem 1rem; border-radius: 5px;
+                  border: 0; background: #3d6fe0; color: #fff; cursor: pointer; }
+.card { background: #1b1e24; border: 1px solid #2a2e36; border-radius: 8px;
+        margin-bottom: .6rem; }
+.card > summary { display: flex; gap: .8rem; align-items: baseline; flex-wrap: wrap;
+        padding: .55rem .9rem; cursor: pointer; list-style: none; }
+.card > summary::-webkit-details-marker { display: none; }
+.when { color: #8b93a1; font-size: .82rem; min-width: 8.5em; }
+.slug { color: #9aa3b3; font-size: .82rem; }
+.ask { flex: 1; min-width: 12em; }
+.badge { font-size: .75rem; padding: .12rem .55rem; border-radius: 999px;
+         border: 1px solid transparent; white-space: nowrap; }
+.b-imported { background: #173925; color: #6fe0a8; border-color: #2c5c40; }
+.b-dryrun   { background: #17332e; color: #62d0c0; border-color: #295c52; }
+.b-grabbed  { background: #16324a; color: #6cb8f0; border-color: #29527a; }
+.b-matched  { background: #1c3a52; color: #8fc7f2; border-color: #2c5578; }
+.b-empty    { background: #40222235; color: #e2938d; border-color: #5c3535; }
+.b-pass     { background: #3a3320; color: #d9bf6e; border-color: #5c522f; }
+.b-error    { background: #4a1d1d; color: #ef8a83; border-color: #7a2f2f; }
+.b-rss      { background: #262a33; color: #9aa3b3; border-color: #3a3f4a; }
+.body { padding: .3rem 1rem 1rem; border-top: 1px solid #2a2e36; }
+.body h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+           color: #8b93a1; margin: 1rem 0 .4rem; }
+table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+th, td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #23272f;
+         vertical-align: top; }
+th { color: #8b93a1; font-weight: 500; }
+td.num { text-align: right; white-space: nowrap; }
+.confbar { display: inline-block; height: .5em; border-radius: 3px;
+           background: #3d6fe0; vertical-align: middle; }
+.conf-hit .confbar { background: #4caf7d; }
+.why { color: #aab2c0; font-size: .84rem; margin: .15rem 0 .4rem; padding-left: 1.1rem; }
+.why .ok { color: #6fe0a8; } .why .no { color: #ef8a83; } .why .warn { color: #d9bf6e; }
+.note { color: #d9bf6e; font-size: .84rem; }
+.muted { color: #8b93a1; }
+.ladder li { margin: .15rem 0; }
+code { background: #101216; padding: .05rem .35rem; border-radius: 4px; font-size: .85em; }
+</style>
 </head>
 <body>
-<h1>Scenehound</h1>
-<div id="app">Loading…</div>
+<header>
+  <h1>SCENEHOUND</h1>
+  <span class="meta"><span id="polldot"></span><span id="pollmsg">connecting…</span></span>
+  <span class="meta" id="indexinfo"></span>
+</header>
+<main>
+  <div id="keyform" hidden>
+    <p>Enter your Scenehound API key (from <code>/config/apikey</code> or
+       <code>SCENEHOUND_API_KEY</code>). Stored only in this browser.</p>
+    <input id="keyinput" type="password" placeholder="API key" autocomplete="off">
+    <button id="keysave">Connect</button>
+    <p id="keyerr" class="note" hidden>That key was rejected — try again.</p>
+  </div>
+  <div id="grabs"></div>
+  <div id="sessions"></div>
+</main>
+<script>
+"use strict";
+const POLL_MS = 4000;
+const KEY_STORAGE = "scenehound_apikey";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---- API key handling: URL param > localStorage > prompt ---- */
+let apikey = new URLSearchParams(location.search).get("apikey")
+          || localStorage.getItem(KEY_STORAGE) || "";
+if (new URLSearchParams(location.search).get("apikey"))
+  localStorage.setItem(KEY_STORAGE, apikey);
+
+function showKeyForm(rejected) {
+  $("keyform").hidden = false;
+  $("keyerr").hidden = !rejected;
+  $("sessions").innerHTML = "";
+  $("grabs").innerHTML = "";
+}
+$("keysave").onclick = () => {
+  apikey = $("keyinput").value.trim();
+  localStorage.setItem(KEY_STORAGE, apikey);
+  $("keyform").hidden = true;
+  poll();
+};
+
+/* ---- plain-language "why" translation ---- */
+const STRONG_TEXT = {
+  date: "Release date matches the scene's date",
+  site: "Studio name appears in the title",
+  performer: "Performer name appears in the title",
+  title: "The scene's full title appears in the release",
+};
+const VETO_TEXT = {
+  "date-mismatch": "Rejected: the release has a date, and it isn't the scene's date (±1 day).",
+  "site-mismatch": "Rejected: the title names a different studio from your wanted list.",
+};
+function whyLines(c, threshold) {
+  const out = [];
+  if (c.veto) {
+    out.push(`<span class="no">✗ ${esc(VETO_TEXT[c.veto] || "Rejected: " + c.veto)}</span>`);
+    return out;
+  }
+  for (const sig of c.strong_signals) {
+    const pts = c.detail[sig] != null ? ` (+${Math.round(c.detail[sig])})` : "";
+    out.push(`<span class="ok">✓ ${esc(STRONG_TEXT[sig] || sig)}${pts}</span>`);
+  }
+  if (!c.strong_signals.includes("title") && c.detail.title != null)
+    out.push(`Title is similar (+${c.detail.title.toFixed(1)})`);
+  if (c.strong_signals.length === 1)
+    out.push(`<span class="warn">⚠ Needs two strong signals to match — only one found, so confidence is capped at 65.</span>`);
+  const cmp = c.confidence >= threshold
+    ? `<b>${c.confidence}</b> ≥ threshold <b>${threshold}</b> → <b>matched</b>`
+    : `<b>${c.confidence}</b> &lt; threshold <b>${threshold}</b> → not matched`;
+  out.push(`Confidence ${cmp}`);
+  return out;
+}
+
+/* ---- rendering ---- */
+const fmtTime = t => t ? new Date(t * 1000).toLocaleString() : "";
+const fmtSize = n => n == null ? "" :
+  n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n / 1e6).toFixed(0) + " MB";
+
+function badge(s) {
+  const o = s.outcome;
+  if (o.imported) return o.imported.dry_run
+    ? ['b-dryrun', 'Would import (dry-run)'] : ['b-imported', 'Imported'];
+  if (o.grab) return ['b-grabbed', 'Grabbed'];
+  if (s.kind === 'rss') return ['b-rss', `RSS: ${o.rewritten} rewritten of ${o.items_total}`];
+  if (s.kind === 'passthrough') return ['b-pass', `Passthrough (${o.matched_count})`];
+  if (o.status === 'error') return ['b-error', 'Error'];
+  if (o.status === 'matched') return ['b-matched', `Matched (${o.matched_count})`];
+  return ['b-empty', 'No matches'];
+}
+
+function humanAsk(s) {
+  if (s.kind === 'rss') return 'RSS sync';
+  if (s.parsed_site) return `${s.parsed_site} ${s.parsed_dates.join(' / ')}`;
+  return s.raw_query || '(empty query)';
+}
+
+const FALLBACK_TEXT = {
+  "unparseable-query": "Scenehound couldn't parse this as a «site + date» query, so it was passed straight to Prowlarr unmodified.",
+  "scene-unresolved": "No wanted scene matches this site + date, so the query was passed straight to Prowlarr unmodified.",
+  "no-index": "The wanted list hasn't loaded yet, so the query was passed straight to Prowlarr unmodified.",
+};
+
+function queryChain(s) {
+  let h = `<h3>Query chain</h3>`;
+  h += `<div>Whisparr asked for: <code>${esc(s.raw_query || "(RSS: no query)")}</code></div>`;
+  if (s.parsed_site)
+    h += `<div>Understood as: studio <b>${esc(s.parsed_site)}</b>, date ${esc(s.parsed_dates.join(" or "))}`
+       + (s.scenes.length ? ` → wanted scene ${s.scenes.map(sc =>
+           `<b>${esc(sc.site)} — ${esc(sc.title)}</b> (${esc(sc.date)})`).join(", ")}` : "") + `</div>`;
+  if (s.fallback_reason)
+    h += `<div class="note">${esc(FALLBACK_TEXT[s.fallback_reason] || s.fallback_reason)}</div>`;
+  if (s.variants.length) {
+    h += `<table><tr><th></th><th>Query sent to Prowlarr</th><th>Results</th></tr>`;
+    for (const v of s.variants)
+      h += `<tr><td>${v.fired ? "✓" : "○"}</td><td><code>${esc(v.query)}</code></td>` +
+           `<td class="num">${v.fired ? v.result_count : '<span class="muted">not sent</span>'}</td></tr>`;
+    h += `</table>`;
+  }
+  for (const n of s.notes) h += `<div class="note">⚠ ${esc(n)}</div>`;
+  return h;
+}
+
+function candidates(s) {
+  if (!s.candidates.length) return s.kind === "search"
+    ? `<h3>Candidates</h3><div class="muted">Prowlarr returned nothing for any query variant.</div>` : "";
+  let h = `<h3>Candidates (${s.candidates.length}${
+    s.dropped_candidates ? ` shown, +${s.dropped_candidates} more dropped` : ""})</h3>`;
+  h += `<table><tr><th>Release title</th><th>Size</th><th>Seeders</th><th>Confidence</th><th></th></tr>`;
+  for (const c of s.candidates) {
+    h += `<tr class="${c.matched ? "conf-hit" : ""}">` +
+      `<td>${esc(c.title)}${c.rewritten_title
+          ? `<div class="muted">→ returned as: ${esc(c.rewritten_title)}</div>` : ""}` +
+      `<div class="why">${whyLines(c, s.threshold).join("<br>")}</div></td>` +
+      `<td class="num">${fmtSize(c.size)}</td><td class="num">${c.seeders ?? ""}</td>` +
+      `<td class="num">${c.confidence} <span class="confbar" style="width:${c.confidence * 0.6}px"></span></td>` +
+      `<td>${c.matched ? "✓" : ""}</td></tr>`;
+  }
+  return h + `</table>`;
+}
+
+function outcome(s) {
+  const o = s.outcome;
+  let h = `<h3>Outcome</h3><ul class="ladder">`;
+  if (s.kind === "rss")
+    h += `<li>RSS sync: ${o.items_total} items from Prowlarr, ${o.rewritten} rewritten to canonical titles.</li>`;
+  else if (s.kind === "passthrough")
+    h += `<li>Passed through: ${o.matched_count} result(s) returned to Whisparr unmodified.</li>`;
+  else if (o.status === "error")
+    h += `<li class="no">✗ Prowlarr error — see notes above.</li>`;
+  else if (o.matched_count)
+    h += `<li>✓ Returned ${o.matched_count} matched release(s) to Whisparr.</li>`;
+  else
+    h += `<li>✗ <b>Failure</b>: no candidate matched a wanted scene; nothing returned.</li>`;
+  if (o.grab)
+    h += `<li>✓ Whisparr grabbed <code>${esc(o.grab.release_title)}</code> at ${fmtTime(o.grab.at)}.</li>`;
+  if (o.imported)
+    h += o.imported.dry_run
+      ? `<li>✓ Scenehound <b>would have imported</b> ${o.imported.file_count} file(s) (dry-run) at ${fmtTime(o.imported.at)}.</li>`
+      : `<li>✓ Scenehound auto-imported ${o.imported.file_count} file(s) at ${fmtTime(o.imported.at)}.</li>`;
+  return h + `</ul>`;
+}
+
+function render(data) {
+  const open = new Set([...document.querySelectorAll("details[open]")].map(d => d.dataset.sid));
+  const idx = data.index || {};
+  $("indexinfo").textContent =
+    `wanted index: ${idx.size} scenes` +
+    (idx.age_seconds != null ? `, refreshed ${Math.round(idx.age_seconds / 60)} min ago` : " (not loaded)");
+  $("grabs").innerHTML = (data.unmatched_grabs || []).map(u =>
+    `<div class="card"><summary style="display:block;padding:.55rem .9rem">` +
+    `<span class="badge b-grabbed">Grab</span> ` +
+    `${u.grab.release_title ? `<code>${esc(u.grab.release_title)}</code>` : `download <code>${esc(u.grab.download_id)}</code>`}` +
+    ` <span class="muted">not correlated to a recorded search — ${fmtTime(u.grab.at)}</span>` +
+    (u.imported ? ` <span class="badge ${u.imported.dry_run ? "b-dryrun" : "b-imported"}">${u.imported.dry_run ? "would import" : "imported"}</span>` : "") +
+    `</summary></div>`).join("");
+  $("sessions").innerHTML = (data.sessions || []).map(s => {
+    const [cls, label] = badge(s);
+    return `<details class="card" data-sid="${s.session_id}" ${open.has(String(s.session_id)) ? "open" : ""}>` +
+      `<summary><span class="when">${fmtTime(s.started_at)}</span>` +
+      `<span class="slug">${esc(s.slug)}</span>` +
+      `<span class="ask">${esc(humanAsk(s))}</span>` +
+      `<span class="badge ${cls}">${esc(label)}</span></summary>` +
+      `<div class="body">${queryChain(s)}${candidates(s)}${outcome(s)}</div></details>`;
+  }).join("") || `<p class="muted">No searches recorded yet. Trigger a search in Whisparr and it will appear here.</p>`;
+}
+
+/* ---- polling ---- */
+async function poll() {
+  if (!apikey) { showKeyForm(false); return; }
+  try {
+    const r = await fetch(`/ui/api/sessions?apikey=${encodeURIComponent(apikey)}`);
+    if (r.status === 401) {
+      localStorage.removeItem(KEY_STORAGE); apikey = "";
+      $("polldot").className = "err"; $("pollmsg").textContent = "unauthorized";
+      showKeyForm(true); return;
+    }
+    render(await r.json());
+    $("polldot").className = ""; $("pollmsg").textContent = "live";
+  } catch (e) {
+    $("polldot").className = "err"; $("pollmsg").textContent = "unreachable";
+  }
+}
+poll();
+setInterval(poll, POLL_MS);
+</script>
 </body>
 </html>
