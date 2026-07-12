@@ -22,9 +22,11 @@ from scenehound.matcher import score
 log = logging.getLogger("scenehound.import_completer")
 
 HELD_STATES = frozenset({"importBlocked", "importPending"})
-# The proven by-ID hold. Matched case-insensitively as substrings so minor
-# wording drift across eros versions fails SAFE (no marker -> not handled).
-_BY_ID_MARKERS = ("matched to movie by id", "manual import required")
+# The proven by-ID hold. Matched case-insensitively as a substring so minor
+# wording drift across eros versions fails SAFE (no marker -> not handled). Only
+# the DISTINCTIVE "matched to movie by id" phrase qualifies; the generic "manual
+# import required" appears in unrelated manual-import prompts and is not enough.
+_BY_ID_MARKERS = ("matched to movie by id",)
 
 
 @dataclass(frozen=True)
@@ -96,7 +98,10 @@ def manual_import_from_record(record: dict) -> ManualImportItem:
     movie = record.get("movie") if isinstance(record.get("movie"), dict) else None
     movie_id = int(movie["id"]) if movie and movie.get("id") else None
     rejections = _rejection_strings(record.get("rejections", []))
-    is_sample = any("sample" in r.lower() for r in rejections)
+    # EXACT "sample" only: Radarr-lineage also emits "Unable to determine if file
+    # is a sample" for an INDETERMINATE file, which must NOT be excluded as a sample
+    # (else a 2-file torrent could pass phase-1 as single and the real file is deleted).
+    is_sample = any(r.strip().lower() == "sample" for r in rejections)
     langs = tuple(l for l in (record.get("languages") or []) if isinstance(l, dict))
     item_id = int(record["id"]) if record.get("id") is not None else None
     return ManualImportItem(
@@ -193,6 +198,11 @@ class PackMatch:
 def _match_one(
     cand: ManualImportItem, item: QueueItem, index, config: ImportCompleterConfig
 ) -> FileMatch:
+    # Any rejection blocks the file (and, all-or-nothing, the whole pack) — phase 1
+    # requires zero rejections, so a scorer- or ID-matched pack file with a rejection
+    # ("Unknown quality", "Not an upgrade") must NOT import either.
+    if cand.rejections:
+        return FileMatch(cand.path, cand, None, "unmatched")
     # A movie Whisparr pre-populated is trusted ONLY when it equals the grabbed
     # movieId (never a foreign by-ID guess we didn't make).
     if cand.movie_id is not None:
@@ -239,6 +249,13 @@ def finalize_pack(
             return Skip(f"movie-not-monitored ({mid})")
         if has_file:
             return Skip(f"movie-hasfile-already ({mid})")
+    # Two files aimed at the SAME movieId (e.g. 1080p + 2160p of one scene, or a
+    # fork that pre-populated every pack file with the grabbed movie) -> Whisparr
+    # imports one and the other is left, then deleted at cleanup. Never silently
+    # discard; skip the whole pack for manual handling.
+    targets = [f.movie_id for f in pack.files]
+    if len(set(targets)) != len(targets):
+        return Skip(f"duplicate-movie-target {sorted(targets)}")
     files = tuple(
         _file_entry(f.path, f.movie_id, f.cand, item.download_id)
         for f in pack.files
@@ -273,6 +290,8 @@ class ImportCompleter:
         self._attempts: dict[str, int] = {}
         self._parked: set[str] = set()
         self._logged_skips: dict[str, str] = {}
+        self._last_fired: dict[str, float] = {}
+        self._logged_dryrun: set[str] = set()
 
     def notify(self) -> None:
         self._wake.set()
@@ -305,48 +324,80 @@ class ImportCompleter:
         try:
             return await self.sweep(now)
         except Exception as exc:  # never let the loop die on a transient Whisparr error
-            log.error("import sweep failed (will retry): %s", exc)
+            log.exception("import sweep failed (will retry): %s", exc)
             return SweepSummary()
 
     async def sweep(self, now: float) -> SweepSummary:
         s = SweepSummary()
+        seen_ids: set[str] = set()
         records = await self._client.fetch_queue()
         for record in records:
-            item = queue_item_from_record(record)
-            if item is None or not is_by_id_hold(item):
-                continue
-            did = item.download_id
-            if did in self._parked:
-                continue
-            self._first_seen.setdefault(did, now)
-            if now - self._first_seen[did] < self._config.grace_seconds:
-                s.waited += 1
-                continue
-            attempts = self._attempts.get(did, 0)
-            if attempts >= self._config.max_attempts:
-                self._parked.add(did)
-                log.warning("import parked download_id=%s after %d attempts", did, attempts)
-                s.parked += 1
-                continue
-            plan = await self._plan(item)
-            if isinstance(plan, Skip):
-                if self._logged_skips.get(did) != plan.reason:
-                    self._logged_skips[did] = plan.reason
-                    log.info("import skip download_id=%s reason=%s", did, plan.reason)
-                s.skipped += 1
-                continue
-            self._attempts[did] = attempts + 1
-            if self._config.dry_run:
-                log.info(
-                    "DRY-RUN import download_id=%s files=%d body=%s",
-                    did, len(plan.files),
-                    {"name": "ManualImport", "importMode": "copy", "files": list(plan.files)},
-                )
-            else:
+            # Collect the infohash of EVERY record (not just by-ID ones) — an imported
+            # item leaves the queue entirely, so anything absent below gets pruned.
+            did_raw = record.get("downloadId") if isinstance(record, dict) else None
+            if did_raw:
+                seen_ids.add(str(did_raw))
+            try:
+                item = queue_item_from_record(record)
+                if item is None or not is_by_id_hold(item):
+                    continue
+                did = item.download_id
+                if did in self._parked:
+                    continue
+                self._first_seen.setdefault(did, now)
+                if now - self._first_seen[did] < self._config.grace_seconds:
+                    s.waited += 1
+                    continue
+                # Live-only retry cap: dry-run items never clear the queue, so counting
+                # their "acts" would silently park items during the observation rung of
+                # the rollout.
+                if (not self._config.dry_run
+                        and self._attempts.get(did, 0) >= self._config.max_attempts):
+                    self._parked.add(did)
+                    log.warning("import parked download_id=%s after %d attempts",
+                                did, self._attempts.get(did, 0))
+                    s.parked += 1
+                    continue
+                plan = await self._plan(item)
+                if isinstance(plan, Skip):
+                    if self._logged_skips.get(did) != plan.reason:
+                        self._logged_skips[did] = plan.reason
+                        log.info("import skip download_id=%s reason=%s", did, plan.reason)
+                    s.skipped += 1
+                    continue
+                if self._config.dry_run:
+                    if did not in self._logged_dryrun:
+                        self._logged_dryrun.add(did)
+                        log.info(
+                            "DRY-RUN import download_id=%s files=%d body=%s",
+                            did, len(plan.files),
+                            {"name": "ManualImport", "importMode": "copy",
+                             "files": list(plan.files)},
+                        )
+                    s.acted += 1
+                    continue
+                # Live: don't double-fire while a prior command is still importing (the
+                # item stays queued until Whisparr's async copy finishes). Cooldown =
+                # one grace window.  [F5]
+                if now - self._last_fired.get(did, float("-inf")) < self._config.grace_seconds:
+                    s.waited += 1
+                    continue
+                self._attempts[did] = self._attempts.get(did, 0) + 1
+                self._last_fired[did] = now
                 await self._client.post_manual_import(list(plan.files))
                 log.info("import fired download_id=%s files=%d movie=%d",
                          did, len(plan.files), item.movie_id)
-            s.acted += 1
+                s.acted += 1
+            except Exception:  # one malformed record must not abort the sweep
+                log.exception("import record failed download_id=%s", did_raw)
+                continue
+        # Prune process-local state to the queue we just saw so a cleared/re-grabbed
+        # infohash starts fresh next time it appears.
+        self._parked &= seen_ids
+        self._logged_dryrun &= seen_ids
+        for store in (self._first_seen, self._attempts, self._logged_skips, self._last_fired):
+            for d in [d for d in store if d not in seen_ids]:
+                del store[d]
         return s
 
     async def _plan(self, item: QueueItem) -> "ActionPlan | Skip":
@@ -375,10 +426,14 @@ class ImportCompleter:
         # is set) — no fetch needed. For scorer-matched movies (cand.movie_id is None,
         # we assigned scene_id), fetch each missing movie_id at most once. This eros
         # fork exposes movieFileId (0 == no file), NOT hasFile.
+        # Reuse embedded state ONLY when BOTH monitored and movieFileId are present:
+        # a MISSING embedded movieFileId (None) must not be read as "no file" — fall
+        # through to fetch_movie(mid) for the belt-and-braces re-check.
         movie_states: dict[int, tuple[bool, bool]] = {
             f.movie_id: (bool(f.cand.monitored), bool(f.cand.movie_file_id))
             for f in pack.files
             if f.movie_id is not None and f.cand.movie_id is not None
+            and f.cand.monitored is not None and f.cand.movie_file_id is not None
         }
         for mid in pack.matched_movie_ids:
             if mid in movie_states:

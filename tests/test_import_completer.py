@@ -414,3 +414,157 @@ async def test_phase2_skips_pack_when_a_movie_already_has_file():
     s = await ic.sweep(now=1.0)
     assert s.acted == 0 and s.skipped == 1
     assert posted == []
+
+
+# --- final-review fixes (F1-F5, M1-M4) ---
+
+import logging
+
+
+# F1 -- narrow sample detection (exact "sample" only, not substring).
+def test_indeterminate_sample_message_is_not_a_sample():
+    # Radarr-lineage emits this for a file it CANNOT classify -- it is NOT a sample.
+    c = _cand(rejections=["Unable to determine if file is a sample"])
+    assert c.is_sample is False
+
+
+def test_exact_sample_rejection_is_a_sample():
+    assert _cand(rejections=["Sample"]).is_sample is True
+
+
+def test_plan_phase1_skips_when_indeterminate_file_would_be_second_video():
+    # Without F1 the substring match would exclude the indeterminate file as a
+    # "sample", letting a 2-file torrent pass as single (and delete the excluded one).
+    qi = queue_item_from_record(BY_ID)
+    cands = [_cand(path="/dl/a.mp4"),
+             _cand(path="/dl/b.mp4",
+                   rejections=["Unable to determine if file is a sample"])]
+    plan = plan_phase1(qi, cands, ImportCompleterConfig())
+    assert isinstance(plan, Skip) and "single" in plan.reason.lower()
+
+
+# F2 -- phase-2 rejection gate: any rejection blocks the file (all-or-nothing).
+def test_match_pack_rejection_blocks_even_id_matched_file():
+    cand = manual_import_from_record({
+        "path": "x.mp4", "folderName": "TFG", "movie": {"id": 7},
+        "quality": {"quality": {"id": 3}}, "languages": [{"id": 1}],
+        "releaseGroup": "GRP", "rejections": ["Unknown quality"], "size": 5_000_000_000,
+    })
+    pack = match_pack(queue_item_from_record(BY_ID), [cand], _index(),
+                      ImportCompleterConfig())
+    assert pack.files[0].verdict == "unmatched"
+    assert not pack.fully_matched
+
+
+# F3 -- unique movie targets in finalize_pack.
+def test_finalize_pack_skips_duplicate_movie_targets():
+    item = queue_item_from_record(BY_ID)
+    cands = [_packcand("a.mp4", movie={"id": 7}), _packcand("b.mp4", movie={"id": 7})]
+    pack = match_pack(item, cands, _index(), ImportCompleterConfig())
+    assert pack.fully_matched  # both matched to grabbed movieId 7
+    out = finalize_pack(item, pack, {7: (True, False)}, ImportCompleterConfig())
+    assert isinstance(out, Skip) and "duplicate-movie-target" in out.reason
+
+
+# F4 -- dry-run must never park or burn the retry cap.
+async def test_dry_run_never_parks_or_burns_retry_cap(caplog):
+    spy = Spy()
+    ic = _completer(spy, dry_run=True, max_attempts=2, grace_seconds=0)
+    with caplog.at_level(logging.INFO, logger="scenehound.import_completer"):
+        for _ in range(5):
+            s = await ic.sweep(now=1.0)
+            assert s.parked == 0
+            assert s.acted == 1
+    assert spy.posted == []
+    assert ic._attempts == {}          # dry-run never consumed an attempt
+    assert not ic._parked              # never parked
+    assert ic._logged_dryrun == {"HASH1"}
+    dry = [r for r in caplog.records if "DRY-RUN import" in r.getMessage()]
+    assert len(dry) == 1               # logged exactly once across five sweeps
+
+
+# F5 -- post-fire cooldown: no double-fire within one grace window.
+async def test_live_cooldown_blocks_double_fire_within_grace_window():
+    spy = Spy()
+    ic = _completer(spy, dry_run=False, grace_seconds=100)
+    await ic.sweep(now=0.0)         # first-seen stamped, within grace -> waited
+    assert spy.posted == []
+    await ic.sweep(now=101.0)       # grace elapsed -> fires
+    assert len(spy.posted) == 1
+    await ic.sweep(now=150.0)       # 150-101=49 < 100 cooldown -> no new POST
+    assert len(spy.posted) == 1
+    await ic.sweep(now=250.0)       # 250-101=149 >= 100 -> re-fires
+    assert len(spy.posted) == 2
+
+
+# M1 -- embedded state fail-open: reuse only when BOTH monitored and movieFileId present.
+def _m1_completer():
+    calls: list[str] = []
+
+    def handler(request):
+        url = str(request.url)
+        calls.append(url)
+        if "/api/v3/movie/" in url:
+            mid = int(url.rsplit("/", 1)[1].split("?")[0])
+            return httpx.Response(200, json={"id": mid, "monitored": True, "movieFileId": 0})
+        if url.endswith("/api/v3/command"):
+            return httpx.Response(201, json={"id": 1})
+        return httpx.Response(404)
+
+    hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    holder = IndexHolder()
+    holder.set(WantedIndex([]))
+    ic = ImportCompleter(
+        WhisparrClient("http://w:6969", "k", hc), holder,
+        ImportCompleterConfig(enabled=True, dry_run=False, multipack=True, grace_seconds=0),
+    )
+    return ic, calls
+
+
+async def test_phase2_reuses_embedded_state_when_both_present():
+    ic, calls = _m1_completer()
+    item = queue_item_from_record(BY_ID)
+    cand = _packcand("x.mp4", movie={"id": 7, "monitored": True, "movieFileId": 0})
+    plan = await ic._plan_phase2(item, [cand])
+    assert isinstance(plan, ActionPlan)
+    assert not any("/api/v3/movie/" in u for u in calls)  # embedded state -> no fetch
+
+
+async def test_phase2_fetches_movie_when_embedded_movie_file_id_missing():
+    ic, calls = _m1_completer()
+    item = queue_item_from_record(BY_ID)
+    cand = _packcand("x.mp4", movie={"id": 7, "monitored": True})  # movieFileId absent
+    plan = await ic._plan_phase2(item, [cand])
+    assert isinstance(plan, ActionPlan)
+    assert any("/api/v3/movie/7" in u for u in calls)  # missing state -> re-fetch
+
+
+# M2 -- tighten the hold marker to the distinctive phrase only.
+def test_is_by_id_hold_requires_matched_to_movie_by_id():
+    only_manual = queue_item_from_record({**BY_ID, "statusMessages": [
+        {"title": "x", "messages": ["Manual Import required."]}]})
+    assert is_by_id_hold(only_manual) is False
+    assert is_by_id_hold(queue_item_from_record(BY_ID)) is True  # real msg has both
+
+
+# M3 -- prune process-local state for downloads that left the queue.
+async def test_state_pruned_when_download_leaves_queue():
+    spy = Spy()
+    ic = _completer(spy, dry_run=False, grace_seconds=0)
+    await ic.sweep(now=1.0)
+    assert "HASH1" in ic._first_seen and ic._attempts.get("HASH1") == 1
+    spy.queue = {"page": 1, "pageSize": 1000, "totalRecords": 0, "records": []}
+    await ic.sweep(now=2.0)
+    assert ic._first_seen == {} and ic._attempts == {}
+
+
+# M4 -- one malformed record must not abort the whole sweep.
+async def test_malformed_record_does_not_abort_sweep():
+    malformed = {"downloadId": "BAD", "movieId": "not-a-number",
+                 "trackedDownloadState": "importBlocked",
+                 "statusMessages": [{"messages": ["matched to movie by ID"]}]}
+    spy = Spy(queue={"page": 1, "pageSize": 1000, "totalRecords": 2,
+                     "records": [malformed, BY_ID]})
+    ic = _completer(spy, dry_run=False, grace_seconds=0)
+    s = await ic.sweep(now=1.0)
+    assert s.acted == 1 and len(spy.posted) == 1  # valid by-ID item still imported
