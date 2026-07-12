@@ -213,3 +213,127 @@ def test_healthz_null_age_when_no_index(app):
     body = TestClient(app).get("/healthz").json()
     assert body["index_size"] == 0
     assert body["index_age_seconds"] is None
+
+
+SEARCH_Q = "That Fetish Girl 07.07.2026"
+
+
+def _get(app, q=None, apikey="shk"):
+    from fastapi.testclient import TestClient
+    params = {"t": "search", "apikey": apikey}
+    if q is not None:
+        params["q"] = q
+    return TestClient(app).get("/indexer/empornium/api", params=params)
+
+
+def test_search_records_session(app_with_store, store):
+    r = _get(app_with_store, q=SEARCH_Q)
+    assert r.status_code == 200
+    s = store.snapshot()["sessions"][0]
+    assert s["kind"] == "search"
+    assert s["slug"] == "empornium"
+    assert s["raw_query"] == SEARCH_Q
+    assert s["parsed_site"] == "That Fetish Girl"
+    assert s["parsed_dates"] == ["2026-07-07"]
+    assert s["scenes"][0]["scene_id"] == 7
+    assert s["threshold"] == 75
+    # first variant fired and returned the 2-item feed; early exit leaves the
+    # remaining planned variants recorded as not fired
+    fired = [v for v in s["variants"] if v["fired"]]
+    assert fired == [{"query": "That Fetish Girl 26.07.07", "fired": True, "result_count": 2}]
+    assert any(not v["fired"] for v in s["variants"])
+    assert s["outcome"]["status"] == "matched"
+    assert s["outcome"]["matched_count"] == 1
+    top = s["candidates"][0]
+    assert top["matched"] is True
+    assert top["title"] == "TFG.26.07.07.Latex.Worship.Session.1080p"
+    assert top["rewritten_title"] is not None
+    assert top["strong_signals"] and top["detail"]
+    nomatch = s["candidates"][1]
+    assert nomatch["matched"] is False and nomatch["rewritten_title"] is None
+
+
+def test_unparseable_query_records_passthrough(app_with_store, store):
+    _get(app_with_store, q="not a dated query")
+    s = store.snapshot()["sessions"][0]
+    assert s["kind"] == "passthrough"
+    assert s["fallback_reason"] == "unparseable-query"
+    assert s["outcome"]["status"] == "matched"   # 2 verbatim results returned
+    assert s["outcome"]["matched_count"] == 2
+
+
+def test_unresolved_scene_records_passthrough(app_with_store, store):
+    _get(app_with_store, q="Unknown Studio 01.01.2020")
+    s = store.snapshot()["sessions"][0]
+    assert s["fallback_reason"] == "scene-unresolved"
+
+
+def test_missing_index_records_passthrough(make_app, store):
+    app = make_app(store=store, with_index=False)
+    _get(app, q=SEARCH_Q)
+    assert store.snapshot()["sessions"][0]["fallback_reason"] == "no-index"
+
+
+def test_rate_deferred_search_records_note(app_with_store, store):
+    app_with_store.state.scenehound.buckets["empornium"]._tokens = 0
+    _get(app_with_store, q=SEARCH_Q)
+    s = store.snapshot()["sessions"][0]
+    assert s["kind"] == "search"
+    assert s["outcome"]["status"] == "empty"
+    assert any("rate-deferred" in n for n in s["notes"])
+
+
+def test_rss_records_summary(app_with_store, store):
+    _get(app_with_store)   # no q -> RSS mode
+    s = store.snapshot()["sessions"][0]
+    assert s["kind"] == "rss"
+    assert s["outcome"]["status"] == "rss-summary"
+    assert s["outcome"]["items_total"] == 2
+    assert s["outcome"]["rewritten"] == 1
+    assert len(s["candidates"]) == 1
+    assert s["candidates"][0]["rewritten_title"] is not None
+
+
+def test_prowlarr_error_records_error(make_app, store):
+    app = make_app(store=store, status=500)
+    r = _get(app, q=SEARCH_Q)
+    assert b'code="900"' in r.content
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["status"] == "error"
+    assert any("prowlarr" in n.lower() for n in s["notes"])
+
+
+def test_no_store_means_no_capture_and_identical_bytes(make_app):
+    from scenehound.observe import SessionStore
+    st = SessionStore(max_sessions=50, max_candidates=200)
+    app_plain = make_app()                          # store=None -> NULL_RECORDER
+    app_traced = make_app(store=st)
+    r_plain = _get(app_plain, q=SEARCH_Q)
+    r_traced = _get(app_traced, q=SEARCH_Q)
+    assert r_plain.content == r_traced.content      # byte-identical responses
+    assert len(st.snapshot()["sessions"]) == 1
+
+
+def test_caps_request_not_captured(app_with_store, store):
+    from fastapi.testclient import TestClient
+    TestClient(app_with_store).get(
+        "/indexer/empornium/api", params={"t": "caps", "apikey": "shk"})
+    assert store.snapshot()["sessions"] == []
+
+
+def test_unexpected_exception_records_error_session(app_with_store, store, monkeypatch):
+    import pytest
+    from fastapi.testclient import TestClient
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("scenehound.api.build_feed", _boom)
+    with pytest.raises(RuntimeError):
+        TestClient(app_with_store, raise_server_exceptions=True).get(
+            "/indexer/empornium/api",
+            params={"t": "search", "q": SEARCH_Q, "apikey": "shk"},
+        )
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["status"] == "error"
+    assert any("internal error" in n for n in s["notes"])

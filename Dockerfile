@@ -15,6 +15,7 @@ VOLUME /config
 ENV SCENEHOUND_CONFIG_DIR=/config
 ENV PUID=99
 ENV PGID=100
+# 9797 serves the Torznab endpoints AND the web UI (/ui).
 EXPOSE 9797
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

@@ -568,3 +568,64 @@ async def test_malformed_record_does_not_abort_sweep():
     ic = _completer(spy, dry_run=False, grace_seconds=0)
     s = await ic.sweep(now=1.0)
     assert s.acted == 1 and len(spy.posted) == 1  # valid by-ID item still imported
+
+
+# --- Task 7: import-completer stamps Scenehound-fired imports into the store ---
+
+
+class _FakeStore:
+    def __init__(self):
+        self.imports = []
+
+    def record_import(self, download_id, movie_id, file_count, dry_run):
+        self.imports.append((download_id, movie_id, file_count, dry_run))
+
+
+class _FakeClientOneHold:
+    """Queue holds one by-ID single-file item; manual import has one clean candidate."""
+
+    def __init__(self):
+        self.posted = []
+
+    async def fetch_queue(self):
+        return [dict(BY_ID)]
+
+    async def fetch_manual_import(self, download_id):
+        return [{
+            "path": "/dl/AdultTime.mp4", "folderName": "AdultTime",
+            "movie": {"id": 7}, "quality": {"quality": {"id": 19, "name": "Bluray-2160p"}},
+            "languages": [{"id": 1, "name": "English"}], "releaseGroup": "GRP",
+            "rejections": [], "size": 6_000_000_000,
+        }]
+
+    async def post_manual_import(self, files):
+        self.posted.append(files)
+
+
+def _completer_task7(client, store, dry_run):
+    from scenehound.import_completer import ImportCompleter
+    cfg = ImportCompleterConfig(enabled=True, dry_run=dry_run, grace_seconds=0.0)
+    return ImportCompleter(client, index_holder=None, config=cfg, store=store)
+
+
+async def test_live_import_records_to_store():
+    client, store = _FakeClientOneHold(), _FakeStore()
+    c = _completer_task7(client, store, dry_run=False)
+    await c.sweep(now=1000.0)
+    assert client.posted, "sanity: the import actually fired"
+    assert store.imports == [("HASH1", 7, 1, False)]
+
+
+async def test_dry_run_import_records_flagged_and_once():
+    client, store = _FakeClientOneHold(), _FakeStore()
+    c = _completer_task7(client, store, dry_run=True)
+    await c.sweep(now=1000.0)
+    await c.sweep(now=1001.0)   # second sweep: _logged_dryrun guard, no duplicate
+    assert store.imports == [("HASH1", 7, 1, True)]
+
+
+async def test_no_store_unchanged():
+    client = _FakeClientOneHold()
+    c = _completer_task7(client, store=None, dry_run=False)
+    summary = await c.sweep(now=1000.0)
+    assert summary.acted == 1   # behaves exactly as before

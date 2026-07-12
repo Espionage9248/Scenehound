@@ -11,14 +11,15 @@ canonical titles Whisparr can actually parse. Everything downstream — grabs,
 downloads, imports — is stock Whisparr.
 
 Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
-`docs/superpowers/specs/2026-07-12-import-completer-design.md`.
+`docs/superpowers/specs/2026-07-12-import-completer-design.md`; web UI:
+`docs/superpowers/specs/2026-07-12-web-ui-design.md`.
 
 ## How it works
 
     Whisparr ──torznab──▶ Scenehound ──torznab──▶ Prowlarr ──▶ trackers
                               └──REST──▶ Whisparr API (wanted list)
 
-- **Search**: `thatfetishgirl 07.07.2026` → scene fingerprint → adaptive query
+- **Search**: `thatscenegirl 07.07.2026` → scene fingerprint → adaptive query
   variants → candidates scored (two independent strong signals required) →
   rewritten results returned.
 - **RSS sync**: every new tracker upload is matched against your entire wanted
@@ -30,6 +31,9 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
   *"matched to movie by ID — Manual Import required"* holds via the Whisparr API.
   Fully isolated from the search path — a no-op when disabled. See
   [Auto-completing held imports](#auto-completing-held-imports-opt-in-off-by-default).
+- **Read-only web UI** at `/ui`: recent searches with the full query chain,
+  plain-language match reasons per candidate, and grab/import outcomes. See
+  [Web UI](#web-ui).
 
 ## Setup prerequisites
 
@@ -83,6 +87,38 @@ For each indexer: Settings → Indexers → Add → Torznab:
 Press Test — a green check means the whole chain works. Run one interactive
 search on a monitored scene and watch `docker logs scenehound`.
 
+## Web UI
+
+Scenehound ships a read-only web UI at `http://<host>:9797/ui` (same port as the
+Torznab endpoints) that makes each search legible:
+
+- **Query chain** — what Whisparr asked for, what Scenehound understood, and the
+  query variants sent to Prowlarr (including ones deferred by the rate limiter).
+- **Candidates** — every release Prowlarr returned, with a plain-language
+  explanation of *why* it matched or didn't (signals found, vetoes, confidence
+  vs threshold).
+- **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
+  Whisparr grabs a result and **Imported** when the import-completer lands it.
+
+The page asks for your Scenehound API key once (from `/config/apikey` or
+`SCENEHOUND_API_KEY`) and remembers it in the browser. The page itself contains
+no data; all data comes from an API-key-guarded endpoint.
+
+**Grab tracking** uses Whisparr's Connect webhook (the same one the
+import-completer uses — Settings → Connect → Webhook, URL
+`http://<scenehound>:9797/import/webhook?apikey=<key>`): tick **On Grab** so
+Scenehound hears about grabs. Without it, the outcome ladder stops at
+Matched/Failure.
+
+Everything is held in memory (bounded, most recent ~50 searches) and resets on
+restart. Configuration:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SCENEHOUND_UI_ENABLED` | `true` | Serve the UI and record sessions |
+| `SCENEHOUND_UI_MAX_SESSIONS` | `50` | Ring buffer of recent searches |
+| `SCENEHOUND_UI_MAX_CANDIDATES` | `200` | Max stored candidates per search |
+
 ## Auto-completing held imports (opt-in, off by default)
 
 Some grabs download fine but Whisparr holds them: *"matched to movie by ID —
@@ -101,7 +137,7 @@ background task.
 
 2. In Whisparr → Settings → Connect → add a **Webhook**:
    - URL: `http://SERVER:9797/import/webhook?apikey=<contents of the apikey file>`
-   - Method: `POST`; under Triggers, enable **On Manual Interaction Required**.
+   - Method: `POST`; under Triggers, enable **On Manual Interaction Required** and **On Grab** (the latter additionally feeds the web UI's grab tracking).
    - Press **Test** (Scenehound answers `200`, so the Connect saves), then **Save**.
 
 3. Watch `docker logs -f scenehound`. In dry-run you'll see `DRY-RUN import …`
@@ -131,7 +167,10 @@ a per-file verdict is logged, so finishing it by hand is a checkbox exercise.
 This is deliberate: a partial import would let Whisparr discard the files it
 didn't import — some of which may be scenes you wanted.
 
-## Logs are the UI
+## Logs
+
+The [Web UI](#web-ui) shows the same decisions visually; the logs remain the
+full-detail record.
 
     docker logs -f scenehound
 
@@ -147,7 +186,6 @@ case to `tests/fixtures/corpus.yaml` and it becomes a regression test.
   plugs in yet.
 - Defeating tracker search's title-only retrieval for ancient backlog items:
   RSS catches things going forward; search mode is best-effort for the past.
-- A web UI.
 
 ## License
 

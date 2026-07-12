@@ -46,6 +46,13 @@ class ImportCompleterConfig:
 
 
 @dataclass(frozen=True)
+class UiConfig:
+    enabled: bool = True
+    max_sessions: int = 50
+    max_candidates: int = 200
+
+
+@dataclass(frozen=True)
 class Config:
     whisparr: ServiceConfig
     prowlarr: ServiceConfig
@@ -54,6 +61,7 @@ class Config:
     matching: MatchingConfig = field(default_factory=MatchingConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     import_completer: ImportCompleterConfig = field(default_factory=ImportCompleterConfig)
+    ui: UiConfig = field(default_factory=UiConfig)
     log_level: str = "info"
 
 
@@ -103,6 +111,18 @@ def _import_completer(raw: dict, env: Mapping[str, str]) -> ImportCompleterConfi
     )
 
 
+def _ui(raw: dict, env: Mapping[str, str]) -> UiConfig:
+    d = UiConfig()
+    u = raw.get("ui", {}) or {}
+    return UiConfig(
+        enabled=_env_bool(env, "SCENEHOUND_UI_ENABLED", bool(u.get("enabled", d.enabled))),
+        max_sessions=int(env.get("SCENEHOUND_UI_MAX_SESSIONS", u.get("max_sessions", d.max_sessions))),
+        max_candidates=int(
+            env.get("SCENEHOUND_UI_MAX_CANDIDATES", u.get("max_candidates", d.max_candidates))
+        ),
+    )
+
+
 def load_config(config_dir: Path, env: Mapping[str, str]) -> Config:
     path = config_dir / "config.yaml"
     raw = yaml.safe_load(path.read_text()) or {}
@@ -129,5 +149,6 @@ def load_config(config_dir: Path, env: Mapping[str, str]) -> Config:
             ),
         ),
         import_completer=_import_completer(raw, env),
+        ui=_ui(raw, env),
         log_level=env.get("SCENEHOUND_LOG_LEVEL", raw.get("log_level", "info")),
     )

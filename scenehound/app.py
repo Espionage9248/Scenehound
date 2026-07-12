@@ -18,7 +18,9 @@ from scenehound.clients.whisparr import WhisparrClient
 from scenehound.config import load_config
 from scenehound.import_api import import_router
 from scenehound.import_completer import ImportCompleter
+from scenehound.observe import SessionStore
 from scenehound.rate_limiter import TokenBucket
+from scenehound.ui_api import ui_router
 from scenehound.wanted_index import WantedIndex
 
 log = logging.getLogger("scenehound")
@@ -78,6 +80,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     # handlers, so set the level explicitly in case config.yaml specifies a different one).
     logging.getLogger().setLevel(getattr(logging, config.log_level.upper(), logging.INFO))
 
+    store = (
+        SessionStore(config.ui.max_sessions, config.ui.max_candidates)
+        if config.ui.enabled
+        else None
+    )
     state = AppState(
         config=config,
         prowlarr=None,  # type: ignore[arg-type]  # set in lifespan with a live client
@@ -86,6 +93,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             i.slug: TokenBucket(config.rate_limit.burst, config.rate_limit.refill_seconds)
             for i in config.indexers
         },
+        store=store,
     )
 
     @asynccontextmanager
@@ -100,7 +108,8 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             completer_task = None
             if config.import_completer.enabled:
                 completer = ImportCompleter(
-                    whisparr, state.index_holder, config.import_completer
+                    whisparr, state.index_holder, config.import_completer,
+                    store=state.store,
                 )
                 app.state.import_completer = completer
                 completer_task = asyncio.create_task(completer.run())
@@ -110,8 +119,9 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 )
             task = asyncio.create_task(refresh_loop(state, whisparr))
             log.info(
-                "scenehound started indexers=%s threshold=%d",
+                "scenehound started indexers=%s threshold=%d ui=%s",
                 [i.slug for i in config.indexers], config.matching.threshold,
+                "on" if config.ui.enabled else "off",
             )
             try:
                 yield
@@ -126,7 +136,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
     app.include_router(router)
-    if config.import_completer.enabled:
+    # The webhook serves BOTH features: completer wake-ups and the UI's Grab
+    # events. Mount it if either is on; the handler no-ops for the absent one.
+    if config.import_completer.enabled or config.ui.enabled:
         app.include_router(import_router)
+    if config.ui.enabled:
+        app.include_router(ui_router)
     app.state.scenehound = state
     return app

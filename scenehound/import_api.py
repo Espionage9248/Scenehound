@@ -21,6 +21,19 @@ async def import_webhook(request: Request) -> Response:
         payload = {}
     event = str(payload.get("eventType", ""))
     log.debug("webhook event=%s payload=%s", event, payload)
+    # Grab events also feed the web UI's outcome ladder. record_grab is
+    # exception-shielded in the store, and this runs BEFORE (and independent
+    # of) completer.notify() so a UI problem can never block a sweep.
+    if event == "Grab":
+        store = getattr(state, "store", None)
+        if store is not None:
+            release = payload.get("release")
+            release = release if isinstance(release, dict) else {}
+            title = str(release.get("releaseTitle") or "")
+            download_id = str(payload.get("downloadId")
+                              or release.get("downloadId") or "")
+            if title or download_id:
+                store.record_grab(title, download_id)
     completer = getattr(request.app.state, "import_completer", None)
     # Whisparr's "Test" button posts eventType=Test; 200 it so the Connect saves,
     # but never trigger a sweep from it. Any real event rings the doorbell.

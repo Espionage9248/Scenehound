@@ -126,3 +126,41 @@ def test_import_completer_env_bool_falsey(tmp_path):
     text = MINIMAL_YAML + "\nimport_completer:\n  enabled: true\n"
     cfg = load_config(write_config(tmp_path, text), env={"SCENEHOUND_IMPORT_ENABLED": "false"})
     assert cfg.import_completer.enabled is False
+
+
+def test_ui_defaults(tmp_path):
+    cfg = load_config(write_config(tmp_path), env={})
+    assert cfg.ui.enabled is True
+    assert cfg.ui.max_sessions == 50
+    assert cfg.ui.max_candidates == 200
+
+
+def test_ui_from_yaml(tmp_path):
+    text = MINIMAL_YAML + """
+ui:
+  enabled: false
+  max_sessions: 10
+  max_candidates: 25
+"""
+    cfg = load_config(write_config(tmp_path, text), env={})
+    assert cfg.ui.enabled is False
+    assert cfg.ui.max_sessions == 10
+    assert cfg.ui.max_candidates == 25
+
+
+def test_ui_env_overrides(tmp_path):
+    env = {
+        "SCENEHOUND_UI_ENABLED": "false",
+        "SCENEHOUND_UI_MAX_SESSIONS": "5",
+        "SCENEHOUND_UI_MAX_CANDIDATES": "9",
+    }
+    cfg = load_config(write_config(tmp_path), env=env)
+    assert cfg.ui.enabled is False
+    assert cfg.ui.max_sessions == 5
+    assert cfg.ui.max_candidates == 9
+
+
+def test_ui_env_bool_overrides_yaml_true(tmp_path):
+    text = MINIMAL_YAML + "\nui:\n  enabled: true\n"
+    cfg = load_config(write_config(tmp_path, text), env={"SCENEHOUND_UI_ENABLED": "0"})
+    assert cfg.ui.enabled is False
