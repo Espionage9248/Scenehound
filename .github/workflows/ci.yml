@@ -18,13 +18,20 @@ permissions:
 
 jobs:
   test:
-    name: Test (pytest, py3.12)
+    # Test on the supported floor (requires-python >=3.12) AND the runtime the
+    # image ships (Dockerfile: python:3.14-slim), so the version we deploy is a
+    # version we test — not just one that pip-installs during the image build.
+    name: Test (pytest, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install (runtime + dev)
         run: pip install -e ".[dev]"
