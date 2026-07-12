@@ -60,16 +60,16 @@ def prowlarr_calls():
     return []
 
 
-@pytest.fixture
-def app(prowlarr_calls):
+def build_app(prowlarr_calls, store=None, with_index=True, status=200):
     def handler(request: httpx.Request) -> httpx.Response:
         prowlarr_calls.append(dict(request.url.params))
-        return httpx.Response(200, content=FEED_MATCHING)
+        return httpx.Response(status, content=FEED_MATCHING)
 
     hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     config = make_config()
     holder = IndexHolder()
-    holder.set(WantedIndex([SCENE]))
+    if with_index:
+        holder.set(WantedIndex([SCENE]))
     state = AppState(
         config=config,
         prowlarr=ProwlarrClient(config.prowlarr.url, config.prowlarr.api_key, hc),
@@ -78,11 +78,36 @@ def app(prowlarr_calls):
             i.slug: TokenBucket(config.rate_limit.burst, config.rate_limit.refill_seconds)
             for i in config.indexers
         },
+        store=store,
     )
     application = FastAPI()
     application.include_router(router)
     application.state.scenehound = state
     return application
+
+
+@pytest.fixture
+def app(prowlarr_calls):
+    return build_app(prowlarr_calls)
+
+
+@pytest.fixture
+def store():
+    from scenehound.observe import SessionStore
+    return SessionStore(max_sessions=50, max_candidates=200)
+
+
+@pytest.fixture
+def app_with_store(prowlarr_calls, store):
+    return build_app(prowlarr_calls, store=store)
+
+
+@pytest.fixture
+def make_app(prowlarr_calls):
+    """Builder for tests that need non-default apps (no index / error feeds)."""
+    def _make(store=None, with_index=True, status=200):
+        return build_app(prowlarr_calls, store=store, with_index=with_index, status=status)
+    return _make
 
 
 @pytest.fixture
