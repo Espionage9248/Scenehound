@@ -69,3 +69,60 @@ def test_api_key_env_override(tmp_path):
 def test_missing_config_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_config(tmp_path, env={})
+
+
+def test_import_completer_defaults(tmp_path):
+    cfg = load_config(write_config(tmp_path), env={})
+    ic = cfg.import_completer
+    assert ic.enabled is False
+    assert ic.dry_run is True
+    assert ic.multipack is False
+    assert ic.grace_seconds == 120.0
+    assert ic.reconcile_seconds == 900.0
+    assert ic.max_attempts == 3
+    assert ic.import_threshold == 90
+    assert ic.ambiguity_margin == 10
+
+
+def test_import_completer_from_yaml(tmp_path):
+    text = MINIMAL_YAML + """
+import_completer:
+  enabled: true
+  dry_run: false
+  multipack: true
+  grace_seconds: 30
+  import_threshold: 88
+"""
+    cfg = load_config(write_config(tmp_path, text), env={})
+    ic = cfg.import_completer
+    assert ic.enabled is True
+    assert ic.dry_run is False
+    assert ic.multipack is True
+    assert ic.grace_seconds == 30.0
+    assert ic.import_threshold == 88
+    assert ic.ambiguity_margin == 10  # unspecified -> default
+
+
+def test_import_completer_env_overrides(tmp_path):
+    env = {
+        "SCENEHOUND_IMPORT_ENABLED": "true",
+        "SCENEHOUND_IMPORT_DRY_RUN": "false",
+        "SCENEHOUND_IMPORT_MULTIPACK": "1",
+        "SCENEHOUND_IMPORT_GRACE": "45",
+        "SCENEHOUND_IMPORT_RECONCILE": "600",
+        "SCENEHOUND_IMPORT_MAX_ATTEMPTS": "5",
+        "SCENEHOUND_IMPORT_THRESHOLD": "92",
+        "SCENEHOUND_IMPORT_MARGIN": "15",
+    }
+    cfg = load_config(write_config(tmp_path), env=env)
+    ic = cfg.import_completer
+    assert (ic.enabled, ic.dry_run, ic.multipack) == (True, False, True)
+    assert ic.grace_seconds == 45.0 and ic.reconcile_seconds == 600.0
+    assert ic.max_attempts == 5 and ic.import_threshold == 92 and ic.ambiguity_margin == 15
+
+
+def test_import_completer_env_bool_falsey(tmp_path):
+    # An explicit false-y env value must override a true YAML value.
+    text = MINIMAL_YAML + "\nimport_completer:\n  enabled: true\n"
+    cfg = load_config(write_config(tmp_path, text), env={"SCENEHOUND_IMPORT_ENABLED": "false"})
+    assert cfg.import_completer.enabled is False
