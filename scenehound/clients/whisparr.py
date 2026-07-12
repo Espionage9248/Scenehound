@@ -90,3 +90,60 @@ class WhisparrClient:
             page += 1
         log.info("wanted-fetch complete scenes=%d", len(scenes))
         return scenes
+
+    async def fetch_queue(self) -> list[dict]:
+        records: list[dict] = []
+        page, received, total = 1, 0, None
+        while total is None or received < total:
+            resp = await self._client.get(
+                f"{self._base}/api/v3/queue",
+                params={"page": page, "pageSize": _PAGE_SIZE, "includeMovie": "true"},
+                headers=self._headers,
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            total = int(body.get("totalRecords", 0))
+            batch = body.get("records", [])
+            if not batch:
+                break
+            received += len(batch)
+            records.extend(batch)
+            page += 1
+        return records
+
+    async def fetch_manual_import(
+        self, download_id: str, filter_existing: bool = True
+    ) -> list[dict]:
+        resp = await self._client.get(
+            f"{self._base}/api/v3/manualimport",
+            params={
+                "downloadId": download_id,
+                "filterExistingFiles": "true" if filter_existing else "false",
+            },
+            headers=self._headers,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        return body if isinstance(body, list) else body.get("records", [])
+
+    async def fetch_movie(self, movie_id: int) -> dict:
+        resp = await self._client.get(
+            f"{self._base}/api/v3/movie/{movie_id}",
+            headers=self._headers,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def post_manual_import(
+        self, files: list[dict], import_mode: str = "copy"
+    ) -> None:
+        resp = await self._client.post(
+            f"{self._base}/api/v3/command",
+            json={"name": "ManualImport", "importMode": import_mode, "files": files},
+            headers=self._headers,
+            timeout=60.0,
+        )
+        resp.raise_for_status()

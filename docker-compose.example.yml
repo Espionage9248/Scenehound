@@ -14,4 +14,8 @@ services:
       - WHISPARR_API_KEY=changeme
       - PROWLARR_URL=http://prowlarr:9696
       - PROWLARR_API_KEY=changeme
+      # Import-completer (opt-in; off by default). See README "Auto-completing held imports".
+      # - SCENEHOUND_IMPORT_ENABLED=true
+      # - SCENEHOUND_IMPORT_DRY_RUN=true
+      # - SCENEHOUND_IMPORT_MULTIPACK=true   # phase 2: multi-file packs, all-or-nothing
     restart: unless-stopped

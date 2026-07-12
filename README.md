@@ -66,6 +66,54 @@ For each indexer: Settings → Indexers → Add → Torznab:
 Press Test — a green check means the whole chain works. Run one interactive
 search on a monitored scene and watch `docker logs scenehound`.
 
+## Auto-completing held imports (opt-in, off by default)
+
+Some grabs download fine but Whisparr holds them: *"matched to movie by ID —
+Manual Import required"* (the tracker's original filename can't be scene-matched
+at import time, so Whisparr falls back to the grab-history movie and its safety
+rule holds the by-ID match for manual confirmation). Scenehound can auto-trigger
+these. **Disabled by default; dry-run the first time you enable it.** It is fully
+isolated from the search path — when disabled there is no webhook route and no
+background task.
+
+1. Add to `config.yaml`:
+
+       import_completer:
+         enabled: true
+         dry_run: true      # logs the import it WOULD fire; flip to false when satisfied
+
+2. In Whisparr → Settings → Connect → add a **Webhook**:
+   - URL: `http://SERVER:9797/import/webhook?apikey=<contents of the apikey file>`
+   - Method: `POST`; under Triggers, enable **On Manual Interaction Required**.
+   - Press **Test** (Scenehound answers `200`, so the Connect saves), then **Save**.
+
+3. Watch `docker logs -f scenehound`. In dry-run you'll see `DRY-RUN import …`
+   lines showing the exact command that would fire. When they look right, set
+   `dry_run: false`.
+
+**Rollout ladder:** `enabled: false` → `enabled: true, dry_run: true` (observe the
+logs) → `dry_run: false` (live).
+
+Phase 1 handles **single-file** grabs behind a conservative gate: it only ever
+confirms Whisparr's own by-ID decision (candidate movie id must equal the grabbed
+movie id), requires zero import rejections, waits out a grace period to avoid
+racing Whisparr, and retries a bounded number of times before parking a stuck
+item. Imports always use `copy` mode, so qBittorrent seeding is never disturbed.
+
+**Multi-file packs/siterips** are opt-in on top of phase 1 via an independent flag:
+
+    import_completer:
+      enabled: true
+      multipack: true    # off by default; dry-run first, as above
+
+Multipack is strictly **all-or-nothing**: Scenehound matches every video file in
+the pack to a wanted scene (reusing the same matcher as the search path, at a
+stricter confidence bar) and fires the import only if *every* file matches
+uniquely. If any file is unmatched or ambiguous, the whole pack is left held and
+a per-file verdict is logged, so finishing it by hand is a checkbox exercise.
+This is deliberate: a partial import would let Whisparr discard the files it
+didn't import — some of which may be scenes you wanted.
+
 ## Logs are the UI
 
     docker logs -f scenehound
