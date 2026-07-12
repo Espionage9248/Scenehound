@@ -100,8 +100,19 @@ movie id), requires zero import rejections, waits out a grace period to avoid
 racing Whisparr, and retries a bounded number of times before parking a stuck
 item. Imports always use `copy` mode, so qBittorrent seeding is never disturbed.
 
-Multi-file packs/siterips (phase 2, an `import_completer.multipack` flag) are a
-planned follow-up and are skipped for now.
+**Multi-file packs/siterips** are opt-in on top of phase 1 via an independent flag:
+
+    import_completer:
+      enabled: true
+      multipack: true    # off by default; dry-run first, as above
+
+Multipack is strictly **all-or-nothing**: Scenehound matches every video file in
+the pack to a wanted scene (reusing the same matcher as the search path, at a
+stricter confidence bar) and fires the import only if *every* file matches
+uniquely. If any file is unmatched or ambiguous, the whole pack is left held and
+a per-file verdict is logged, so finishing it by hand is a checkbox exercise.
+This is deliberate: a partial import would let Whisparr discard the files it
+didn't import — some of which may be scenes you wanted.
 
 ## Logs are the UI
 
