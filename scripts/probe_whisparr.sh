@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Probe Whisparr v3 (eros) API shapes for the import-completer. Read-only (GETs only).
-# Usage: WHISPARR_URL=http://192.168.1.5:6979 WHISPARR_API_KEY=xxx ./scripts/probe_whisparr.sh
+# Usage: WHISPARR_URL=http://whisparr-host:6979 WHISPARR_API_KEY=xxx ./scripts/probe_whisparr.sh
 # Run while at least one download is held with "matched to movie by ID / Manual Import required".
 # Sanitize output (strip infohashes/paths you don't want committed) before saving as fixtures.
 set -euo pipefail

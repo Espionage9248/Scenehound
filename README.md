@@ -1,5 +1,7 @@
 # Scenehound
 
+![Scenehound — a Torznab matching proxy between Whisparr and Prowlarr](icons/social-banner-1280x640.png)
+
 Torznab matching proxy between [Whisparr v3] and [Prowlarr]. Whisparr searches
 for scenes by exact `site + date`; private-tracker release naming is chaos.
 Scenehound sits between them, resolves Whisparr's rigid queries against its own
@@ -8,7 +10,8 @@ with smarter query variants, scores every candidate, and returns matches with
 canonical titles Whisparr can actually parse. Everything downstream — grabs,
 downloads, imports — is stock Whisparr.
 
-Design: `docs/plans/2026-07-11-scenehound-design.md`.
+Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
+`docs/superpowers/specs/2026-07-12-import-completer-design.md`.
 
 ## How it works
 
@@ -23,6 +26,10 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`.
 - **Any failure → passthrough**: results flow unmodified, never worse than stock.
 - **Tracker-safe**: per-indexer token bucket (default: burst 4, one query per
   15 s sustained) on top of Prowlarr's own 2 s floor. Deliberately conservative.
+- **Held-import completion** (opt-in, off by default): auto-triggers Whisparr's
+  *"matched to movie by ID — Manual Import required"* holds via the Whisparr API.
+  Fully isolated from the search path — a no-op when disabled. See
+  [Auto-completing held imports](#auto-completing-held-imports-opt-in-off-by-default).
 
 ## Setup prerequisites
 
@@ -36,9 +43,29 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`.
 
 ## Install (Unraid)
 
-Add Container → Template → point at `unraid/scenehound.xml` raw URL. Fill in
-the Whisparr/Prowlarr URLs and API keys. Then create
-`/mnt/user/appdata/scenehound/config.yaml`:
+Scenehound is published as a container image on GHCR by CI on every push to
+`main`:
+
+    ghcr.io/espionage9248/scenehound:latest
+
+Once the **package** is public (Package settings → *Change package visibility* →
+Public — this is a separate toggle from the repo's own visibility), Unraid pulls
+it with no authentication. If you keep the package private, authenticate the
+Unraid host's Docker to GHCR first (a Personal Access Token with `read:packages`):
+
+    echo <PAT-with-read:packages> | docker login ghcr.io -u <github-username> --password-stdin
+
+**Add the template.** Unraid only lists templates that live on the flash drive —
+you can't point it at a template URL. Copy `unraid/scenehound.xml` onto the USB:
+
+    /boot/config/plugins/dockerMan/templates-user/my-scenehound.xml
+
+Then **Add Container → Template → scenehound** (under *User templates*). Fill in
+the Whisparr/Prowlarr URLs and API keys (they're template env vars, not the
+config file) and Apply — Unraid pulls the image from GHCR.
+
+**Config.** Create `/mnt/user/appdata/scenehound/config.yaml` with just your
+indexers (URLs + API keys come from the template env vars, not this file):
 
     indexers:
       - slug: empornium        # -> http://SERVER:9797/indexer/empornium/api
@@ -52,8 +79,11 @@ drops to that user — so no manual `chown` of the appdata path is ever needed.
 Change PUID/PGID (both are advanced fields) only if your appdata directory is
 owned by a different user.
 
-Start the container. Read the Scenehound API key from
-`/mnt/user/appdata/scenehound/apikey`.
+Start the container, then read the Scenehound API key from
+`/mnt/user/appdata/scenehound/apikey` (you'll need it below).
+
+**Updating**: it's a pull, not a rebuild — Unraid's *Check for Updates* (or
+*Force Update* on the container) fetches the newest `:latest` from GHCR.
 
 ## Add to Whisparr
 
@@ -131,3 +161,10 @@ case to `tests/fixtures/corpus.yaml` and it becomes a regression test.
 - Defeating tracker search's title-only retrieval for ancient backlog items:
   RSS catches things going forward; search mode is best-effort for the past.
 - A web UI.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+[Whisparr v3]: https://github.com/Whisparr/Whisparr
+[Prowlarr]: https://github.com/Prowlarr/Prowlarr
