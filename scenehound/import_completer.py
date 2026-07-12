@@ -281,10 +281,12 @@ class ImportCompleter:
     next sweep (bounded by max_attempts), never raised out of the loop.
     """
 
-    def __init__(self, client, index_holder, config: ImportCompleterConfig) -> None:
+    def __init__(self, client, index_holder, config: ImportCompleterConfig,
+                 store=None) -> None:
         self._client = client
         self._index_holder = index_holder
         self._config = config
+        self._store = store          # observe.SessionStore | None; record_import never raises
         self._wake = asyncio.Event()
         self._first_seen: dict[str, float] = {}
         self._attempts: dict[str, int] = {}
@@ -374,6 +376,9 @@ class ImportCompleter:
                             {"name": "ManualImport", "importMode": "copy",
                              "files": list(plan.files)},
                         )
+                        if self._store is not None:
+                            self._store.record_import(
+                                did, item.movie_id, len(plan.files), dry_run=True)
                     s.acted += 1
                     continue
                 # Live: don't double-fire while a prior command is still importing (the
@@ -387,6 +392,9 @@ class ImportCompleter:
                 await self._client.post_manual_import(list(plan.files))
                 log.info("import fired download_id=%s files=%d movie=%d",
                          did, len(plan.files), item.movie_id)
+                if self._store is not None:
+                    self._store.record_import(
+                        did, item.movie_id, len(plan.files), dry_run=False)
                 s.acted += 1
             except Exception:  # one malformed record must not abort the sweep
                 log.exception("import record failed download_id=%s", did_raw)
