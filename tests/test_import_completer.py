@@ -120,3 +120,119 @@ def test_real_manualimport_fixture_maps():
     records = data if isinstance(data, list) else data.get("records", [])
     items = [manual_import_from_record(r) for r in records]
     assert items, "captured manualimport sample had no candidates"
+
+
+# --- service (sweep / grace / retry / dry-run) ---
+
+import httpx
+
+from scenehound.api import IndexHolder
+from scenehound.clients.whisparr import WhisparrClient
+from scenehound.import_completer import ImportCompleter
+from scenehound.wanted_index import WantedIndex
+
+QUEUE_ONE = {"page": 1, "pageSize": 1000, "totalRecords": 1, "records": [BY_ID]}
+MANUAL_CLEAN = [{
+    "path": "/dl/AdultTime.mp4", "folderName": "AdultTime", "movie": {"id": 7},
+    "quality": {"quality": {"id": 19}}, "languages": [{"id": 1}],
+    "releaseGroup": "GRP", "rejections": [], "size": 6_000_000_000,
+}]
+
+
+class Spy:
+    """Records every request; serves queue + manualimport; captures POSTs."""
+    def __init__(self, queue=QUEUE_ONE, manual=MANUAL_CLEAN):
+        self.queue, self.manual = queue, manual
+        self.calls: list[tuple[str, str]] = []
+        self.posted: list[dict] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append((request.method, str(request.url)))
+        url = str(request.url)
+        if "/api/v3/queue" in url:
+            return httpx.Response(200, json=self.queue)
+        if "/api/v3/manualimport" in url:
+            return httpx.Response(200, json=self.manual)
+        if url.endswith("/api/v3/command"):
+            self.posted.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": 1})
+        return httpx.Response(404)
+
+
+def _completer(spy, **cfg):
+    hc = httpx.AsyncClient(transport=httpx.MockTransport(spy.handler))
+    client = WhisparrClient("http://w:6969", "k", hc)
+    holder = IndexHolder()
+    holder.set(WantedIndex([]))
+    return ImportCompleter(client, holder, ImportCompleterConfig(enabled=True, **cfg))
+
+
+async def test_dry_run_fires_no_post_and_only_gets():
+    spy = Spy()
+    ic = _completer(spy, dry_run=True, grace_seconds=0)
+    summary = await ic.sweep(now=1000.0)
+    assert summary.acted == 1
+    assert spy.posted == []
+    assert all(method == "GET" for method, _ in spy.calls)  # hard dry-run property
+
+
+async def test_live_run_posts_manual_import():
+    spy = Spy()
+    ic = _completer(spy, dry_run=False, grace_seconds=0)
+    summary = await ic.sweep(now=1000.0)
+    assert summary.acted == 1
+    assert len(spy.posted) == 1
+    assert spy.posted[0]["name"] == "ManualImport"
+    assert spy.posted[0]["files"][0]["movieId"] == 7
+
+
+async def test_grace_defers_then_acts():
+    spy = Spy()
+    ic = _completer(spy, dry_run=False, grace_seconds=120)
+    first = await ic.sweep(now=1000.0)   # first-seen stamped, within grace
+    assert first.waited == 1 and spy.posted == []
+    second = await ic.sweep(now=1000.0 + 121)  # grace elapsed
+    assert second.acted == 1 and len(spy.posted) == 1
+
+
+async def test_retry_then_park_after_max_attempts():
+    # Item never clears (Spy keeps returning it). Fires up to max_attempts then parks.
+    spy = Spy()
+    ic = _completer(spy, dry_run=False, grace_seconds=0, max_attempts=2)
+    await ic.sweep(now=1.0)   # attempt 1
+    await ic.sweep(now=2.0)   # attempt 2
+    parked = await ic.sweep(now=3.0)  # capped -> park, no further POST
+    assert len(spy.posted) == 2
+    assert parked.parked == 1
+
+
+async def test_skip_does_not_count_as_attempt():
+    spy = Spy(manual=[{**MANUAL_CLEAN[0], "rejections": ["Unknown quality"]}])
+    ic = _completer(spy, dry_run=False, grace_seconds=0, max_attempts=2)
+    s = await ic.sweep(now=1.0)
+    assert s.skipped == 1 and spy.posted == []
+
+
+async def test_non_by_id_items_ignored():
+    downloading = {**BY_ID, "trackedDownloadState": "downloading"}
+    spy = Spy(queue={"page": 1, "pageSize": 1000, "totalRecords": 1, "records": [downloading]})
+    ic = _completer(spy, dry_run=False, grace_seconds=0)
+    s = await ic.sweep(now=1.0)
+    assert (s.acted, s.skipped, s.waited) == (0, 0, 0)
+    assert not any("manualimport" in url for _, url in spy.calls)  # no manualimport fetch
+
+
+async def test_multipack_disabled_skips_multifile():
+    two = [MANUAL_CLEAN[0], {**MANUAL_CLEAN[0], "path": "/dl/b.mp4"}]
+    spy = Spy(manual=two)
+    ic = _completer(spy, dry_run=False, grace_seconds=0, multipack=False)
+    s = await ic.sweep(now=1.0)
+    assert s.skipped == 1 and spy.posted == []
+
+
+async def test_notify_sets_wake_event():
+    spy = Spy()
+    ic = _completer(spy, grace_seconds=0)
+    assert not ic._wake.is_set()
+    ic.notify()
+    assert ic._wake.is_set()
