@@ -19,7 +19,7 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
     Whisparr ──torznab──▶ Scenehound ──torznab──▶ Prowlarr ──▶ trackers
                               └──REST──▶ Whisparr API (wanted list)
 
-- **Search**: `thatfetishgirl 07.07.2026` → scene fingerprint → adaptive query
+- **Search**: `thatscenegirl 07.07.2026` → scene fingerprint → adaptive query
   variants → candidates scored (two independent strong signals required) →
   rewritten results returned.
 - **RSS sync**: every new tracker upload is matched against your entire wanted
