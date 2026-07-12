@@ -236,3 +236,77 @@ def test_null_recorder_accepts_everything():
     NULL_RECORDER.rss_summary(0, [])
     NULL_RECORDER.error("e")
     NULL_RECORDER.commit()
+
+
+def _store_with_matched_session(guid="g1", rewritten="That Fetish Girl 2026-07-07 Latex 1080p"):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "That Fetish Girl 07.07.2026")
+    rec.scored([(_cand(guid), SCENE, _ms(90), rewritten)])
+    rec.commit()
+    return store
+
+
+def test_record_grab_correlates_by_rewritten_title():
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grab"]["download_id"] == "HASH1"
+    assert store.snapshot()["unmatched_grabs"] == []
+
+
+def test_record_grab_correlates_by_original_title():
+    store = _store_with_matched_session()
+    store.record_grab("TFG.26.07.07.Latex.Worship.Session.1080p", "HASH2")
+    assert store.snapshot()["sessions"][0]["outcome"]["grab"]["download_id"] == "HASH2"
+
+
+def test_record_grab_picks_newest_matching_session():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    for _ in range(2):
+        rec = store.recorder("empornium", 75, "q")
+        rec.scored([(_cand("g1"), SCENE, _ms(90), "SAME rewritten")])
+        rec.commit()
+    store.record_grab("SAME rewritten", "HASH3")
+    snap = store.snapshot()["sessions"]
+    assert snap[0]["outcome"]["grab"] is not None     # newest
+    assert snap[1]["outcome"]["grab"] is None          # older untouched
+
+
+def test_record_grab_unmatched_is_kept_and_bounded():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    for i in range(25):
+        store.record_grab(f"Never.Seen.{i}", f"H{i}")
+    grabs = store.snapshot()["unmatched_grabs"]
+    assert len(grabs) == 20                            # bounded
+    assert grabs[0]["grab"]["release_title"] == "Never.Seen.24"  # newest first
+
+
+def test_record_import_stamps_grabbed_session():
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
+    imp = store.snapshot()["sessions"][0]["outcome"]["imported"]
+    assert imp["movie_id"] == 7 and imp["dry_run"] is False
+
+
+def test_record_import_dry_run_flagged():
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=True)
+    assert store.snapshot()["sessions"][0]["outcome"]["imported"]["dry_run"] is True
+
+
+def test_record_import_stamps_unmatched_grab():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.record_grab("Never.Seen.Release", "HASHX")
+    store.record_import("HASHX", movie_id=9, file_count=2, dry_run=False)
+    u = store.snapshot()["unmatched_grabs"][0]
+    assert u["imported"]["movie_id"] == 9
+
+
+def test_record_import_without_any_grab_surfaces():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.record_import("GHOST", movie_id=3, file_count=1, dry_run=False)
+    u = store.snapshot()["unmatched_grabs"][0]
+    assert u["grab"]["download_id"] == "GHOST"
+    assert u["imported"]["movie_id"] == 3

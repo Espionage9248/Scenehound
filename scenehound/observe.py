@@ -159,6 +159,35 @@ class SessionStore:
     def recorder(self, slug: str, threshold: int, raw_query: str) -> "Recorder":
         return Recorder(self, slug, threshold, raw_query)
 
+    @_shielded
+    def record_grab(self, release_title: str, download_id: str) -> None:
+        ev = GrabEvent(release_title, download_id, time.time())
+        for s in self._sessions:  # deque is newest-first already
+            for c in s.candidates:
+                if release_title and (c.rewritten_title == release_title
+                                      or c.title == release_title):
+                    s.outcome.grab = ev
+                    return
+        self._unmatched_grabs.appendleft(UnmatchedGrab(ev))
+
+    @_shielded
+    def record_import(self, download_id: str, movie_id: int,
+                      file_count: int, dry_run: bool) -> None:
+        ev = ImportEvent(time.time(), movie_id, file_count, dry_run)
+        for s in self._sessions:
+            grab = s.outcome.grab
+            if grab is not None and grab.download_id == download_id:
+                s.outcome.imported = ev
+                return
+        for u in self._unmatched_grabs:
+            if u.grab.download_id == download_id:
+                u.imported = ev
+                return
+        # An import for a grab we never saw (e.g. UI enabled mid-flight):
+        # surface it rather than drop it.
+        self._unmatched_grabs.appendleft(
+            UnmatchedGrab(GrabEvent("", download_id, ev.at), imported=ev))
+
     def snapshot(self) -> dict:
         def _to_json_safe(obj):
             """Recursively convert tuples to lists for JSON serialization."""
