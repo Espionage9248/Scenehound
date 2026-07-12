@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Scenehound paw">
+  <g fill="#F472B6">
+    <ellipse cx="32" cy="44" rx="14" ry="11"></ellipse>
+    <ellipse cx="15" cy="31" rx="5" ry="7" transform="rotate(-22 15 31)"></ellipse>
+    <ellipse cx="26" cy="22" rx="5" ry="8" transform="rotate(-8 26 22)"></ellipse>
+    <ellipse cx="38" cy="22" rx="5" ry="8" transform="rotate(8 38 22)"></ellipse>
+    <ellipse cx="49" cy="31" rx="5" ry="7" transform="rotate(22 49 31)"></ellipse>
+  </g>
+</svg>
