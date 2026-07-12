@@ -162,5 +162,9 @@ case to `tests/fixtures/corpus.yaml` and it becomes a regression test.
   RSS catches things going forward; search mode is best-effort for the past.
 - A web UI.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 [Whisparr v3]: https://github.com/Whisparr/Whisparr
 [Prowlarr]: https://github.com/Prowlarr/Prowlarr
