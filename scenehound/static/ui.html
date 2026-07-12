@@ -89,8 +89,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
 /* ---- API key handling: URL param > localStorage > prompt ---- */
 let apikey = new URLSearchParams(location.search).get("apikey")
           || localStorage.getItem(KEY_STORAGE) || "";
-if (new URLSearchParams(location.search).get("apikey"))
+if (new URLSearchParams(location.search).get("apikey")) {
   localStorage.setItem(KEY_STORAGE, apikey);
+  history.replaceState(null, "", location.pathname);
+}
 
 function showKeyForm(rejected) {
   $("keyform").hidden = false;

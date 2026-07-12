@@ -319,3 +319,21 @@ def test_caps_request_not_captured(app_with_store, store):
     TestClient(app_with_store).get(
         "/indexer/empornium/api", params={"t": "caps", "apikey": "shk"})
     assert store.snapshot()["sessions"] == []
+
+
+def test_unexpected_exception_records_error_session(app_with_store, store, monkeypatch):
+    import pytest
+    from fastapi.testclient import TestClient
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("scenehound.api.build_feed", _boom)
+    with pytest.raises(RuntimeError):
+        TestClient(app_with_store, raise_server_exceptions=True).get(
+            "/indexer/empornium/api",
+            params={"t": "search", "q": SEARCH_Q, "apikey": "shk"},
+        )
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["status"] == "error"
+    assert any("internal error" in n for n in s["notes"])

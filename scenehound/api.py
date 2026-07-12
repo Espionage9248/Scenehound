@@ -220,6 +220,9 @@ async def torznab_endpoint(slug: str, request: Request) -> Response:
         rec.error(str(exc))
         log.error("search slug=%s prowlarr error: %s", slug, exc)
         return _xml(build_error(900, str(exc)))
+    except Exception as exc:
+        rec.error(f"internal error: {exc}")
+        raise
     finally:
         rec.commit()
 

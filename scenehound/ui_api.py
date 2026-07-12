@@ -9,14 +9,12 @@ other keyed route.
 """
 from __future__ import annotations
 
-import logging
 import time
 from importlib import resources
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
-log = logging.getLogger("scenehound.ui_api")
 ui_router = APIRouter()
 
 # Read once at import: the page never changes at runtime.

@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from scenehound.models import SceneFingerprint
 
@@ -162,6 +162,10 @@ class SessionStore:
     @_shielded
     def record_grab(self, release_title: str, download_id: str) -> None:
         ev = GrabEvent(release_title, download_id, time.time())
+        # Accepted limitation (v0.2.0): if a second grab correlates to the
+        # same session, it overwrites outcome.grab here; the earlier grab's
+        # import (if any) then surfaces via unmatched_grabs instead of being
+        # lost silently.
         for s in self._sessions:  # deque is newest-first already
             for c in s.candidates:
                 if release_title and (c.rewritten_title == release_title
