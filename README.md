@@ -1,5 +1,3 @@
-# Scenehound
-
 ![Scenehound — a Torznab matching proxy between Whisparr and Prowlarr](icons/social-banner-1280x640.png)
 
 Torznab matching proxy between [Whisparr v3] and [Prowlarr]. Whisparr searches
