@@ -11,7 +11,8 @@ canonical titles Whisparr can actually parse. Everything downstream — grabs,
 downloads, imports — is stock Whisparr.
 
 Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
-`docs/superpowers/specs/2026-07-12-import-completer-design.md`.
+`docs/superpowers/specs/2026-07-12-import-completer-design.md`; web UI:
+`docs/superpowers/specs/2026-07-12-web-ui-design.md`.
 
 ## How it works
 
@@ -30,6 +31,9 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
   *"matched to movie by ID — Manual Import required"* holds via the Whisparr API.
   Fully isolated from the search path — a no-op when disabled. See
   [Auto-completing held imports](#auto-completing-held-imports-opt-in-off-by-default).
+- **Read-only web UI** at `/ui`: recent searches with the full query chain,
+  plain-language match reasons per candidate, and grab/import outcomes. See
+  [Web UI](#web-ui).
 
 ## Setup prerequisites
 
@@ -163,7 +167,10 @@ a per-file verdict is logged, so finishing it by hand is a checkbox exercise.
 This is deliberate: a partial import would let Whisparr discard the files it
 didn't import — some of which may be scenes you wanted.
 
-## Logs are the UI
+## Logs
+
+The [Web UI](#web-ui) shows the same decisions visually; the logs remain the
+full-detail record.
 
     docker logs -f scenehound
 
@@ -179,7 +186,6 @@ case to `tests/fixtures/corpus.yaml` and it becomes a regression test.
   plugs in yet.
 - Defeating tracker search's title-only retrieval for ancient backlog items:
   RSS catches things going forward; search mode is best-effort for the past.
-- A web UI.
 
 ## License
 
