@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>scenehound</Name>
-  <Repository>scenehound:latest</Repository>
-  <Registry/>
+  <Repository>ghcr.io/espionage9248/scenehound:latest</Repository>
+  <Registry>https://ghcr.io/espionage9248/scenehound</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
