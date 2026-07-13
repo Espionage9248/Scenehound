@@ -115,7 +115,7 @@ const STRONG_TEXT = {
   title: "The scene's full title appears in the release",
 };
 const VETO_TEXT = {
-  "date-mismatch": "Rejected: the release has a date, and it isn't the scene's date (±1 day).",
+  "date-mismatch": "Rejected: the release's date is too far from the scene's — or the match is too weak to forgive the gap.",
   "site-mismatch": "Rejected: the title names a different studio from your wanted list.",
 };
 function whyLines(c, threshold) {
@@ -128,6 +128,8 @@ function whyLines(c, threshold) {
     const pts = c.detail[sig] != null ? ` (+${Math.round(c.detail[sig])})` : "";
     out.push(`<span class="ok">✓ ${esc(STRONG_TEXT[sig] || sig)}${pts}</span>`);
   }
+  if (c.detail.date_skew_days != null)
+    out.push(`<span class="warn">⚠ Release date is ${c.detail.date_skew_days} day(s) off the scene's — forgiven: ${c.strong_signals.length} other strong signals.</span>`);
   if (!c.strong_signals.includes("title") && c.detail.title != null)
     out.push(`Title is similar (+${c.detail.title.toFixed(1)})`);
   if (c.strong_signals.length === 1)
