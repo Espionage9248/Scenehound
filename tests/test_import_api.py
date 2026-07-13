@@ -153,3 +153,25 @@ def test_webhook_grab_absent_release_dict_records_with_none_size():
         "/import/webhook?apikey=shk", json=payload)
     assert r.status_code == 200
     assert fs.grabs == [("", "H", None)]
+
+
+def test_webhook_grab_infinity_size_degrades_to_none_and_still_notifies():
+    # json.loads accepts the non-standard Infinity literal; int(inf) raises
+    # OverflowError, which must degrade to None, never 500 or skip the sweep.
+    fc, fs = FakeCompleter(), FakeStore()
+    body = b'{"eventType": "Grab", "release": {"releaseTitle": "T", "size": Infinity}, "downloadId": "H"}'
+    r = TestClient(_app_with_store(fc, fs)).post(
+        "/import/webhook?apikey=shk", content=body,
+        headers={"content-type": "application/json"})
+    assert r.status_code == 200
+    assert fs.grabs == [("T", "H", None)]
+    assert fc.notified == 1
+
+
+def test_webhook_grab_float_size_truncates():
+    fc, fs = FakeCompleter(), FakeStore()
+    payload = {"eventType": "Grab",
+               "release": {"releaseTitle": "T", "size": 123.7},
+               "downloadId": "H"}
+    TestClient(_app_with_store(fc, fs)).post("/import/webhook?apikey=shk", json=payload)
+    assert fs.grabs == [("T", "H", 123)]

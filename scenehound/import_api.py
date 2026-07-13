@@ -35,7 +35,7 @@ async def import_webhook(request: Request) -> Response:
             raw_size = release.get("size")
             try:
                 size = int(raw_size) if raw_size is not None else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 size = None
             if title or download_id:
                 store.record_grab(title, download_id, size)
