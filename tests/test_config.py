@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scenehound.config import Config, load_config
+from scenehound.config import Config, MatchingConfig, load_config
 
 MINIMAL_YAML = """
 whisparr:
@@ -164,3 +164,29 @@ def test_ui_env_bool_overrides_yaml_true(tmp_path):
     text = MINIMAL_YAML + "\nui:\n  enabled: true\n"
     cfg = load_config(write_config(tmp_path, text), env={"SCENEHOUND_UI_ENABLED": "0"})
     assert cfg.ui.enabled is False
+
+
+def test_matching_date_skew_days_default(tmp_path):
+    cfg = load_config(write_config(tmp_path), env={})
+    assert cfg.matching.date_skew_days == 3
+
+
+def test_matching_date_skew_days_yaml_and_env(tmp_path):
+    text = MINIMAL_YAML + "\nmatching:\n  date_skew_days: 5\n"
+    assert load_config(write_config(tmp_path, text), env={}).matching.date_skew_days == 5
+    cfg = load_config(
+        write_config(tmp_path, text), env={"SCENEHOUND_DATE_SKEW_DAYS": "1"}
+    )
+    assert cfg.matching.date_skew_days == 1  # env wins over yaml
+
+
+def test_date_skew_default_consistent_across_layers():
+    # The plan's global constraint: the default window is identical everywhere.
+    import inspect
+
+    from scenehound.import_completer import ImportCompleter, _match_one, match_pack
+    from scenehound.matcher import score
+
+    d = MatchingConfig().date_skew_days
+    for fn in (score, match_pack, _match_one, ImportCompleter.__init__):
+        assert inspect.signature(fn).parameters["date_skew_days"].default == d, fn

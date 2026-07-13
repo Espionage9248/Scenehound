@@ -60,13 +60,14 @@ def prowlarr_calls():
     return []
 
 
-def build_app(prowlarr_calls, store=None, with_index=True, status=200):
+def build_app(prowlarr_calls, store=None, with_index=True, status=200,
+              config=None, feed=FEED_MATCHING):
     def handler(request: httpx.Request) -> httpx.Response:
         prowlarr_calls.append(dict(request.url.params))
-        return httpx.Response(status, content=FEED_MATCHING)
+        return httpx.Response(status, content=feed)
 
     hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    config = make_config()
+    config = config or make_config()
     holder = IndexHolder()
     if with_index:
         holder.set(WantedIndex([SCENE]))
@@ -105,8 +106,10 @@ def app_with_store(prowlarr_calls, store):
 @pytest.fixture
 def make_app(prowlarr_calls):
     """Builder for tests that need non-default apps (no index / error feeds)."""
-    def _make(store=None, with_index=True, status=200):
-        return build_app(prowlarr_calls, store=store, with_index=with_index, status=status)
+    def _make(store=None, with_index=True, status=200, matching=None, feed=FEED_MATCHING):
+        config = make_config(matching=matching) if matching is not None else None
+        return build_app(prowlarr_calls, store=store, with_index=with_index,
+                         status=status, config=config, feed=feed)
     return _make
 
 

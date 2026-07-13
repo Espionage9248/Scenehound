@@ -629,3 +629,19 @@ async def test_no_store_unchanged():
     c = _completer_task7(client, store=None, dry_run=False)
     summary = await c.sweep(now=1000.0)
     assert summary.acted == 1   # behaves exactly as before
+
+
+def test_match_pack_forgives_small_date_skew():
+    # Uploader stamped 07.05 for the 07-07 scene; site+performer+title stand alone.
+    cands = [_packcand("TFG.26.07.05.Latex.Worship.Session.Jane.Doe.1080p.mp4")]
+    pack = match_pack(queue_item_from_record(BY_ID), cands, _index(SCENE_A),
+                      ImportCompleterConfig(import_threshold=75))
+    assert pack.fully_matched
+    assert pack.matched_movie_ids == frozenset({101})
+
+
+def test_match_pack_threads_date_skew_days():
+    cands = [_packcand("TFG.26.07.05.Latex.Worship.Session.Jane.Doe.1080p.mp4")]
+    pack = match_pack(queue_item_from_record(BY_ID), cands, _index(SCENE_A),
+                      ImportCompleterConfig(import_threshold=75), date_skew_days=1)
+    assert not pack.fully_matched

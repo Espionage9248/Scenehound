@@ -25,6 +25,7 @@ class IndexerConfig:
 class MatchingConfig:
     threshold: int = 75
     max_queries_per_search: int = 5
+    date_skew_days: int = 3
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,9 @@ def load_config(config_dir: Path, env: Mapping[str, str]) -> Config:
             threshold=int(env.get("SCENEHOUND_THRESHOLD", m.get("threshold", 75))),
             max_queries_per_search=int(
                 env.get("SCENEHOUND_MAX_QUERIES", m.get("max_queries_per_search", 5))
+            ),
+            date_skew_days=int(
+                env.get("SCENEHOUND_DATE_SKEW_DAYS", m.get("date_skew_days", 3))
             ),
         ),
         rate_limit=RateLimitConfig(

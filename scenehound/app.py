@@ -110,6 +110,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 completer = ImportCompleter(
                     whisparr, state.index_holder, config.import_completer,
                     store=state.store,
+                    date_skew_days=config.matching.date_skew_days,
                 )
                 app.state.import_completer = completer
                 completer_task = asyncio.create_task(completer.run())

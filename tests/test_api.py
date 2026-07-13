@@ -337,3 +337,32 @@ def test_unexpected_exception_records_error_session(app_with_store, store, monke
     s = store.snapshot()["sessions"][0]
     assert s["outcome"]["status"] == "error"
     assert any("internal error" in n for n in s["notes"])
+
+
+from fastapi.testclient import TestClient
+
+from scenehound.config import MatchingConfig
+
+FEED_SKEWED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <item>
+      <title>TFG.26.07.05.Latex.Worship.Session.Jane.Doe.1080p</title>
+      <guid>g-skew</guid><link>http://p/dl/9</link>
+      <torznab:attr name="category" value="6000"/>
+    </item>
+  </channel>
+</rss>"""
+
+
+def test_search_respects_configured_date_skew(make_app):
+    # Release stamped 07-05 for the 07-07 scene (2 days off, site+performer+title).
+    params = {"t": "search", "q": "thatfetishgirl 07.07.2026",
+              "cat": "6000", "apikey": "shk"}
+    # Default window (3): forgiven and rewritten.
+    lenient = TestClient(make_app(feed=FEED_SKEWED))
+    assert len(titles(lenient.get("/indexer/empornium/api", params=params))) == 1
+    # Window 1: the old hard veto — proves the CONFIGURED value reaches score().
+    strict = TestClient(make_app(
+        matching=MatchingConfig(date_skew_days=1), feed=FEED_SKEWED))
+    assert titles(strict.get("/indexer/empornium/api", params=params)) == []

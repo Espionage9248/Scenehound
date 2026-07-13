@@ -30,4 +30,5 @@
   <Config Name="Web UI Enabled" Target="SCENEHOUND_UI_ENABLED" Default="true" Mode="" Description="Read-only web UI at /ui showing recent searches, match reasons, and grab/import outcomes" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
   <Config Name="Rate Limit Burst" Target="SCENEHOUND_RATE_BURST" Default="4" Mode="" Description="Token bucket burst per indexer" Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
   <Config Name="Rate Limit Refill Seconds" Target="SCENEHOUND_RATE_REFILL" Default="15" Mode="" Description="Seconds per token refill (higher = gentler on trackers)" Type="Variable" Display="advanced" Required="false" Mask="false">15</Config>
+  <Config Name="Date Skew Forgiveness Days" Target="SCENEHOUND_DATE_SKEW_DAYS" Default="3" Mode="" Description="Max days a release's stamped date may differ from the scene's date and still match when other evidence is strong. Set to 1 to disable forgiveness (old strict behaviour)." Type="Variable" Display="advanced" Required="false" Mask="false">3</Config>
 </Container>
