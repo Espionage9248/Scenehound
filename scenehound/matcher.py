@@ -21,6 +21,12 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   strong signal by mere containment, and a distinctive title never pairs with
   date alone to clear the threshold (a near-exact title with no site/performer
   still contributes up to TITLE_MAX medium points but is not a strong signal).
+- A parsed date that contradicts the scene's date is a hard veto, EXCEPT when
+  the skew is within date_skew_days (default 3) and the match clears the
+  two-strong-signal rule without the date — uploaders sometimes stamp
+  rip/upload dates a few days off the studio release date. A forgiven date
+  contributes no points; the skew is recorded in detail["date_skew_days"]
+  for the UI trace.
 """
 from __future__ import annotations
 
@@ -104,6 +110,7 @@ def score(
     scene: SceneFingerprint,
     title: str,
     other_sites: frozenset[str] = frozenset(),
+    date_skew_days: int = 3,
 ) -> MatchScore:
     ngrams = _title_ngrams(title)
     detail: dict[str, float] = {}
@@ -111,12 +118,14 @@ def score(
 
     # --- date ---
     title_dates = extract_dates(title)
-    date_hit = any(abs((d - scene.date).days) <= 1 for d in title_dates)
-    if date_hit:
-        strong.append("date")
-        detail["date"] = STRONG_DATE
-    elif title_dates:
-        return MatchScore(0, (), "date-mismatch", {"date": 0.0})
+    date_off: int | None = None  # smallest days-off when no title date is within ±1
+    if title_dates:
+        off = min(abs((d - scene.date).days) for d in title_dates)
+        if off <= 1:
+            strong.append("date")
+            detail["date"] = STRONG_DATE
+        else:
+            date_off = off
 
     # --- site ---
     if _site_in_title(ngrams, scene):
@@ -153,7 +162,18 @@ def score(
             if ratio >= _TITLE_RATIO_GATE:
                 detail["title"] = ratio / 100.0 * TITLE_MAX
 
+    # --- date veto, decided after the other signals ---
+    # A mismatched date is forgiven only when the skew is small (uploaders
+    # stamp rip/upload dates a few days off the studio release date) AND the
+    # match clears the two-strong-signal rule without the date. Otherwise it
+    # stays a hard contradiction: on daily-release sites the date is often
+    # the only thing separating sibling scenes.
+    if date_off is not None and (date_off > date_skew_days or len(strong) < 2):
+        return MatchScore(0, (), "date-mismatch", {"date": 0.0})
+
     total = sum(detail.values())
     if len(strong) < 2:
         total = min(total, SINGLE_SIGNAL_CAP)
+    if date_off is not None:
+        detail["date_skew_days"] = float(date_off)  # trace metadata, not points
     return MatchScore(min(100, round(total)), tuple(strong), None, detail)

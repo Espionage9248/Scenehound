@@ -189,3 +189,65 @@ def test_site_plus_date_without_title_overlap_still_matches():
     assert {"date", "site"} <= set(s.strong_signals)
     assert "title" not in s.strong_signals
     assert s.confidence >= 75
+
+
+# --- date-skew forgiveness (uploader-stamped dates a few days off) ---
+
+FORGIVE_SCENE = SceneFingerprint(
+    scene_id=20,
+    site="Household Fantasy",
+    site_aliases=(),
+    date=date(2026, 7, 7),
+    title="Big Titty Step-Sistinder Match",
+    performers=("Zarina Noir",),
+)
+
+
+def test_skewed_date_forgiven_with_two_strong_signals():
+    # Production mismatch 2026-07-13: uploader stamped 07-05 for the 07-07 scene.
+    s = score(
+        FORGIVE_SCENE,
+        "[ScottStark-HouseholdFantasy] Zarina Noir - "
+        "Big Titty Step Sister Tinder Match (2026-07-05) [1080p]",
+    )
+    assert s.veto is None
+    assert {"site", "performer"} <= set(s.strong_signals)
+    assert "date" not in s.strong_signals
+    assert s.detail["date_skew_days"] == 2.0
+    assert s.confidence >= 75
+
+
+def test_forgiven_date_contributes_no_points():
+    # Deliberately below 100 total (site+performer, no title hit) so the
+    # min(100, ...) clamp can't mask metadata leaking into the sum.
+    dated = score(SCENE, "ThatFetishGirl.2026-07-09.Jane.Doe.Solo.Clip")
+    undated = score(SCENE, "ThatFetishGirl.Jane.Doe.Solo.Clip")
+    assert dated.veto is None
+    assert dated.confidence == undated.confidence < 100
+
+
+def test_skewed_date_beyond_window_still_vetoes():
+    # 4 days off > default window of 3 — hard contradiction even with strong evidence.
+    s = score(SCENE, "ThatFetishGirl.2026-07-11.Latex.Worship.Session.Jane.Doe")
+    assert s.veto == "date-mismatch"
+    assert s.confidence == 0
+
+
+def test_skewed_date_with_one_strong_signal_vetoes():
+    # Site alone can't carry a contradicted date: forgiveness needs two strong signals.
+    s = score(SCENE, "ThatFetishGirl.2026-07-09.Something.Unrelated")
+    assert s.veto == "date-mismatch"
+    assert s.confidence == 0
+
+
+def test_skew_forgiven_at_exact_window_boundary():
+    s = score(SCENE, "ThatFetishGirl.2026-07-10.Latex.Worship.Session.Jane.Doe",
+              date_skew_days=3)
+    assert s.veto is None
+    assert s.detail["date_skew_days"] == 3.0
+
+
+def test_skew_window_one_restores_hard_veto():
+    s = score(SCENE, "ThatFetishGirl.2026-07-09.Latex.Worship.Session.Jane.Doe",
+              date_skew_days=1)
+    assert s.veto == "date-mismatch"

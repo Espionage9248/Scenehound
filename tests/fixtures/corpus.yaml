@@ -123,3 +123,12 @@
     title: "Special Medicine"
     performers: ["Alex Adams", "Lulu Romanova"]
   expect: match
+
+- release: "[ScottStark-HouseholdFantasy] Zarina Noir - Big Titty Step Sister Tinder Match (2026-07-05) [1080p]"
+  scene:                                                # uploader stamped 07-05 for the 07-07 scene;
+    site: "Household Fantasy"                           # forgiven: site + performer stand without the date
+    aliases: []
+    date: 2026-07-07
+    title: "Big Titty Step-Sistinder Match"
+    performers: ["Zarina Noir"]
+  expect: match
