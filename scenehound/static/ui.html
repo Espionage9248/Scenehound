@@ -147,11 +147,17 @@ const fmtTime = t => t ? new Date(t * 1000).toLocaleString() : "";
 const fmtSize = n => n == null ? "" :
   n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n / 1e6).toFixed(0) + " MB";
 
-function badge(s) {
-  const o = s.outcome;
+function grabBadge(o) {
   if (o.imported) return o.imported.dry_run
     ? ['b-dryrun', 'Would import (dry-run)'] : ['b-imported', 'Imported'];
   if (o.grab) return ['b-grabbed', 'Grabbed'];
+  return null;
+}
+
+function badge(s) {
+  const o = s.outcome;
+  const g = grabBadge(o);
+  if (g) return g;
   if (s.kind === 'rss') return ['b-rss', `RSS: ${o.rewritten} rewritten of ${o.items_total}`];
   if (s.kind === 'passthrough') return ['b-pass', `Passthrough (${o.matched_count})`];
   if (o.status === 'error') return ['b-error', 'Error'];
@@ -198,8 +204,11 @@ function candidates(s) {
     s.dropped_candidates ? ` shown, +${s.dropped_candidates} more dropped` : ""})</h3>`;
   h += `<table><tr><th>Release title</th><th>Size</th><th>Seeders</th><th>Confidence</th><th></th></tr>`;
   for (const c of s.candidates) {
+    // grabbed_guid may be absent on sessions recorded before this feature.
+    const gb = s.outcome.grabbed_guid && c.guid === s.outcome.grabbed_guid
+      ? grabBadge(s.outcome) : null;
     h += `<tr class="${c.matched ? "conf-hit" : ""}">` +
-      `<td>${esc(c.title)}${c.rewritten_title
+      `<td>${esc(c.title)}${gb ? ` <span class="badge ${gb[0]}">${esc(gb[1])}</span>` : ""}${c.rewritten_title
           ? `<div class="muted">→ returned as: ${esc(c.rewritten_title)}</div>` : ""}` +
       `<div class="why">${whyLines(c, s.threshold).join("<br>")}</div></td>` +
       `<td class="num">${fmtSize(c.size)}</td><td class="num">${c.seeders ?? ""}</td>` +
@@ -222,8 +231,14 @@ function outcome(s) {
     h += `<li>✓ Returned ${o.matched_count} matched release(s) to Whisparr.</li>`;
   else
     h += `<li>✗ <b>Failure</b>: no candidate matched a wanted scene; nothing returned.</li>`;
-  if (o.grab)
-    h += `<li>✓ Whisparr grabbed <code>${esc(o.grab.release_title)}</code> at ${fmtTime(o.grab.at)}.</li>`;
+  if (o.grab) {
+    const gc = o.grabbed_guid
+      ? (s.candidates || []).find(c => c.guid === o.grabbed_guid) : null;
+    h += `<li>✓ Whisparr grabbed <code>${esc(o.grab.release_title)}</code>` +
+      (gc && gc.title !== o.grab.release_title
+        ? ` — candidate <code>${esc(gc.title)}</code>` : "") +
+      ` at ${fmtTime(o.grab.at)}.</li>`;
+  }
   if (o.imported)
     h += o.imported.dry_run
       ? `<li>✓ Scenehound <b>would have imported</b> ${o.imported.file_count} file(s) (dry-run) at ${fmtTime(o.imported.at)}.</li>`
