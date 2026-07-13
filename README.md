@@ -45,9 +45,35 @@ Design: `docs/plans/2026-07-11-scenehound-design.md`; held-import subsystem:
    for other apps). Whisparr should reach those trackers only through Scenehound,
    or you'll get duplicate results.
 
-## Install (Unraid)
+## Install (Docker — recommended)
 
 The image is on GHCR: `ghcr.io/espionage9248/scenehound:latest`.
+
+1. Copy [`docker-compose.example.yml`](docker-compose.example.yml) to
+   `docker-compose.yml` and fill in your Whisparr/Prowlarr URLs and API keys
+   (environment variables).
+
+2. Create `./config/config.yaml` with just your indexers (URLs and API keys
+   come from the environment, not this file):
+
+       indexers:
+         - slug: empornium        # -> http://SERVER:9797/indexer/empornium/api
+           prowlarr_id: 12        # Prowlarr indexer ID (visible in its URL when edited)
+         - slug: happyfappy
+           prowlarr_id: 15
+
+3. `docker compose up -d`, then read the Scenehound API key from
+   `./config/apikey` (you'll need it below).
+
+**PUID / PGID**: the container starts as root only to `chown /config` to
+`PUID:PGID`, then drops to that user — so no manual `chown` of the config
+directory is ever needed. Set them to whatever owner you want for `./config`
+(the example uses `1000:1000`).
+
+**Updating**: it's a pull, not a rebuild — `docker compose pull && docker
+compose up -d`.
+
+## Install (Unraid)
 
 Copy `unraid/scenehound.xml` onto the flash drive at
 `/boot/config/plugins/dockerMan/templates-user/my-scenehound.xml`, then
@@ -55,26 +81,18 @@ Copy `unraid/scenehound.xml` onto the flash drive at
 Whisparr/Prowlarr URLs and API keys (template env vars) and Apply — Unraid pulls
 the image from GHCR.
 
-Create `/mnt/user/appdata/scenehound/config.yaml` with just your indexers (URLs
-and API keys come from the template env vars, not this file):
+Create `/mnt/user/appdata/scenehound/config.yaml` with the same indexers-only
+content shown in the Docker install above.
 
-    indexers:
-      - slug: empornium        # -> http://SERVER:9797/indexer/empornium/api
-        prowlarr_id: 12        # Prowlarr indexer ID (visible in its URL when edited)
-      - slug: happyfappy
-        prowlarr_id: 15
-
-**PUID / PGID**: default to `99` / `100` (Unraid's `nobody:users`). The
-container runs as root only to `chown /config` to `PUID:PGID` on start, then
-drops to that user — so no manual `chown` of the appdata path is ever needed.
-Change PUID/PGID (both are advanced fields) only if your appdata directory is
-owned by a different user.
+**PUID / PGID**: default to `99` / `100` (Unraid's `nobody:users`); both are
+advanced fields — change them only if your appdata directory is owned by a
+different user.
 
 Start the container, then read the Scenehound API key from
 `/mnt/user/appdata/scenehound/apikey` (you'll need it below).
 
-**Updating**: it's a pull, not a rebuild — Unraid's *Check for Updates* (or
-*Force Update* on the container) fetches the newest `:latest` from GHCR.
+**Updating**: Unraid's *Check for Updates* (or *Force Update* on the container)
+fetches the newest `:latest` from GHCR.
 
 ## Add to Whisparr
 

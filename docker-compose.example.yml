@@ -14,6 +14,9 @@ services:
       - WHISPARR_API_KEY=changeme
       - PROWLARR_URL=http://prowlarr:9696
       - PROWLARR_API_KEY=changeme
+      # Matching. Max days a release's stamped date may differ from the scene's
+      # date and still match when other evidence is strong; 1 disables forgiveness.
+      # - SCENEHOUND_DATE_SKEW_DAYS=3
       # Import-completer (opt-in; off by default). See README "Auto-completing held imports".
       # - SCENEHOUND_IMPORT_ENABLED=true
       # - SCENEHOUND_IMPORT_DRY_RUN=true
