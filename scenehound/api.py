@@ -104,6 +104,7 @@ async def _search_mode(
         return await _passthrough(state, indexer, q, cats, rec)
 
     threshold = state.config.matching.threshold
+    skew = state.config.matching.date_skew_days
     bucket = state.buckets[indexer.slug]
     best: dict[str, _Scored] = {}
     variants = plan_queries(scenes[0], state.config.matching.max_queries_per_search)
@@ -121,7 +122,8 @@ async def _search_mode(
                 rec.variant_fired(variant, len(candidates))
                 for c in candidates:
                     for scene in scenes:
-                        s = score(scene, c.title, other_sites=index.other_sites_for(scene))
+                        s = score(scene, c.title, other_sites=index.other_sites_for(scene),
+                                  date_skew_days=skew)
                         log.debug(
                             "score slug=%s scene=%d title=%r conf=%d strong=%s veto=%s",
                             indexer.slug, scene.scene_id, c.title,
@@ -162,6 +164,7 @@ async def _rss_mode(
     # One fetch, identical cost to status-quo RSS sync: not bucket-gated.
     candidates = await state.prowlarr.search(indexer.prowlarr_id, None, cats)
     index = state.index_holder.current
+    skew = state.config.matching.date_skew_days
     entries: list[FeedEntry] = []
     rewritten = 0
     rss_matched: list[tuple] = []
@@ -174,7 +177,8 @@ async def _rss_mode(
             best_scene: SceneFingerprint | None = None
             best_ms: MatchScore | None = None
             for scene in index.candidates_for_title(c.title):
-                s = score(scene, c.title, other_sites=index.other_sites_for(scene))
+                s = score(scene, c.title, other_sites=index.other_sites_for(scene),
+                          date_skew_days=skew)
                 if s.confidence >= state.config.matching.threshold and (
                         best_ms is None or s.confidence > best_ms.confidence):
                     best_ms = s

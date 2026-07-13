@@ -196,7 +196,8 @@ class PackMatch:
 
 
 def _match_one(
-    cand: ManualImportItem, item: QueueItem, index, config: ImportCompleterConfig
+    cand: ManualImportItem, item: QueueItem, index, config: ImportCompleterConfig,
+    date_skew_days: int = 3,
 ) -> FileMatch:
     # Any rejection blocks the file (and, all-or-nothing, the whole pack) — phase 1
     # requires zero rejections, so a scorer- or ID-matched pack file with a rejection
@@ -213,7 +214,8 @@ def _match_one(
     name = os.path.basename(cand.path) or cand.path
     scored = []
     for scene in index.candidates_for_title(name):
-        s = score(scene, name, other_sites=index.other_sites_for(scene))
+        s = score(scene, name, other_sites=index.other_sites_for(scene),
+                  date_skew_days=date_skew_days)
         scored.append((s.confidence, bool(s.strong_signals), scene.scene_id))
     scored.sort(key=lambda t: -t[0])
     if not scored or scored[0][0] < config.import_threshold or not scored[0][1]:
@@ -225,10 +227,13 @@ def _match_one(
 
 
 def match_pack(
-    item: QueueItem, candidates: list[ManualImportItem], index, config: ImportCompleterConfig
+    item: QueueItem, candidates: list[ManualImportItem], index,
+    config: ImportCompleterConfig, date_skew_days: int = 3,
 ) -> PackMatch:
     videos = [c for c in candidates if not c.is_sample]
-    return PackMatch(tuple(_match_one(c, item, index, config) for c in videos))
+    return PackMatch(tuple(
+        _match_one(c, item, index, config, date_skew_days) for c in videos
+    ))
 
 
 def finalize_pack(
@@ -282,7 +287,7 @@ class ImportCompleter:
     """
 
     def __init__(self, client, index_holder, config: ImportCompleterConfig,
-                 store=None) -> None:
+                 store=None, date_skew_days: int = 3) -> None:
         self._client = client
         self._index_holder = index_holder
         self._config = config
@@ -294,6 +299,7 @@ class ImportCompleter:
         self._logged_skips: dict[str, str] = {}
         self._last_fired: dict[str, float] = {}
         self._logged_dryrun: set[str] = set()
+        self._date_skew_days = date_skew_days
 
     def notify(self) -> None:
         self._wake.set()
@@ -424,7 +430,7 @@ class ImportCompleter:
         index = self._index_holder.current
         if index is None:
             return Skip("no-wanted-index")
-        pack = match_pack(item, candidates, index, self._config)
+        pack = match_pack(item, candidates, index, self._config, self._date_skew_days)
         if not pack.fully_matched:
             # Log the per-file verdict table so the manual fallback is a checkbox job.
             table = [(f.path, f.verdict, f.movie_id) for f in pack.files]
