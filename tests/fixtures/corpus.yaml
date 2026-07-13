@@ -132,3 +132,7 @@
     title: "Big Titty Step-Sistinder Match"
     performers: ["Zarina Noir"]
   expect: match
+
+- release: "ThatFetishGirl.2026-07-12.Latex.Worship.Session.Jane.Doe"  # 5 days off: beyond skew window, vetoed
+  scene: *latex
+  expect: no_match

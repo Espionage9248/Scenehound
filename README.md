@@ -96,7 +96,10 @@ Torznab endpoints) that makes each search legible:
   query variants sent to Prowlarr (including ones deferred by the rate limiter).
 - **Candidates** — every release Prowlarr returned, with a plain-language
   explanation of *why* it matched or didn't (signals found, vetoes, confidence
-  vs threshold).
+  vs threshold). A release date up to `SCENEHOUND_DATE_SKEW_DAYS` (default 3)
+  off the scene's date is forgiven when at least two other signals are
+  strong; set it to 1 to disable forgiveness and restore the old hard veto
+  on any date mismatch.
 - **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
   Whisparr grabs a result and **Imported** when the import-completer lands it.
 
