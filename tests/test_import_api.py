@@ -77,8 +77,8 @@ class FakeStore:
     def __init__(self):
         self.grabs = []
 
-    def record_grab(self, release_title, download_id):
-        self.grabs.append((release_title, download_id))
+    def record_grab(self, release_title, download_id, size=None):
+        self.grabs.append((release_title, download_id, size))
 
 
 def _app_with_store(completer, store):
@@ -99,7 +99,7 @@ def test_webhook_grab_records_and_still_notifies():
     r = TestClient(_app_with_store(fc, fs)).post(
         "/import/webhook?apikey=shk", json=GRAB_PAYLOAD)
     assert r.status_code == 200
-    assert fs.grabs == [("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")]
+    assert fs.grabs == [("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", None)]
     assert fc.notified == 1
 
 
@@ -108,7 +108,7 @@ def test_webhook_grab_download_id_fallback_inside_release():
     payload = {"eventType": "Grab",
                "release": {"releaseTitle": "T", "downloadId": "HASH2"}}
     TestClient(_app_with_store(fc, fs)).post("/import/webhook?apikey=shk", json=payload)
-    assert fs.grabs == [("T", "HASH2")]
+    assert fs.grabs == [("T", "HASH2", None)]
 
 
 def test_webhook_grab_without_store_still_ok():
@@ -124,3 +124,32 @@ def test_webhook_non_grab_event_does_not_record():
         "/import/webhook?apikey=shk", json={"eventType": "Download"})
     assert fs.grabs == []
     assert fc.notified == 1
+
+
+def test_webhook_grab_records_release_size():
+    fc, fs = FakeCompleter(), FakeStore()
+    payload = {"eventType": "Grab",
+               "release": {"releaseTitle": "T", "size": 2469606195},
+               "downloadId": "H"}
+    TestClient(_app_with_store(fc, fs)).post("/import/webhook?apikey=shk", json=payload)
+    assert fs.grabs == [("T", "H", 2469606195)]
+
+
+def test_webhook_grab_junk_size_degrades_to_none():
+    fc, fs = FakeCompleter(), FakeStore()
+    payload = {"eventType": "Grab",
+               "release": {"releaseTitle": "T", "size": "not a number"},
+               "downloadId": "H"}
+    r = TestClient(_app_with_store(fc, fs)).post(
+        "/import/webhook?apikey=shk", json=payload)
+    assert r.status_code == 200
+    assert fs.grabs == [("T", "H", None)]
+
+
+def test_webhook_grab_absent_release_dict_records_with_none_size():
+    fc, fs = FakeCompleter(), FakeStore()
+    payload = {"eventType": "Grab", "downloadId": "H"}   # no release object at all
+    r = TestClient(_app_with_store(fc, fs)).post(
+        "/import/webhook?apikey=shk", json=payload)
+    assert r.status_code == 200
+    assert fs.grabs == [("", "H", None)]

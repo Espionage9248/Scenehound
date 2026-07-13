@@ -32,8 +32,13 @@ async def import_webhook(request: Request) -> Response:
             title = str(release.get("releaseTitle") or "")
             download_id = str(payload.get("downloadId")
                               or release.get("downloadId") or "")
+            raw_size = release.get("size")
+            try:
+                size = int(raw_size) if raw_size is not None else None
+            except (TypeError, ValueError):
+                size = None
             if title or download_id:
-                store.record_grab(title, download_id)
+                store.record_grab(title, download_id, size)
     completer = getattr(request.app.state, "import_completer", None)
     # Whisparr's "Test" button posts eventType=Test; 200 it so the Connect saves,
     # but never trigger a sweep from it. Any real event rings the doorbell.
