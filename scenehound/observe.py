@@ -85,6 +85,7 @@ class GrabEvent:
     release_title: str
     download_id: str
     at: float
+    size: int | None = None     # webhook release.size; tie-breaker only
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,10 @@ class Outcome:
     rewritten: int = 0               # RSS only
     grab: GrabEvent | None = None
     imported: ImportEvent | None = None
+    # guid of the candidate the grab correlated to; None when the grab was
+    # ambiguous (identical titles, size missing or unhelpful) — the UI then
+    # degrades to session-level display only.
+    grabbed_guid: str | None = None
 
 
 @dataclass
@@ -160,18 +165,29 @@ class SessionStore:
         return Recorder(self, slug, threshold, raw_query)
 
     @_shielded
-    def record_grab(self, release_title: str, download_id: str) -> None:
-        ev = GrabEvent(release_title, download_id, time.time())
+    def record_grab(self, release_title: str, download_id: str,
+                    size: int | None = None) -> None:
+        ev = GrabEvent(release_title, download_id, time.time(), size)
         # Accepted limitation (v0.2.0): if a second grab correlates to the
         # same session, it overwrites outcome.grab here; the earlier grab's
         # import (if any) then surfaces via unmatched_grabs instead of being
-        # lost silently.
+        # lost silently. grabbed_guid is restamped together with grab
+        # (possibly back to None) so the pair can never drift apart.
         for s in self._sessions:  # deque is newest-first already
-            for c in s.candidates:
-                if release_title and (c.rewritten_title == release_title
-                                      or c.title == release_title):
-                    s.outcome.grab = ev
-                    return
+            matches = [c for c in s.candidates
+                       if release_title and (c.rewritten_title == release_title
+                                             or c.title == release_title)]
+            if not matches:
+                continue
+            if len(matches) > 1 and size is not None:
+                # Twin releases of one scene can rewrite to identical titles;
+                # the webhook's size is what tells them apart.
+                by_size = [c for c in matches if c.size == size]
+                if len(by_size) == 1:
+                    matches = by_size
+            s.outcome.grab = ev
+            s.outcome.grabbed_guid = matches[0].guid if len(matches) == 1 else None
+            return
         self._unmatched_grabs.appendleft(UnmatchedGrab(ev))
 
     @_shielded
