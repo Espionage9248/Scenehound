@@ -164,3 +164,17 @@ def test_ui_env_bool_overrides_yaml_true(tmp_path):
     text = MINIMAL_YAML + "\nui:\n  enabled: true\n"
     cfg = load_config(write_config(tmp_path, text), env={"SCENEHOUND_UI_ENABLED": "0"})
     assert cfg.ui.enabled is False
+
+
+def test_matching_date_skew_days_default(tmp_path):
+    cfg = load_config(write_config(tmp_path), env={})
+    assert cfg.matching.date_skew_days == 3
+
+
+def test_matching_date_skew_days_yaml_and_env(tmp_path):
+    text = MINIMAL_YAML + "\nmatching:\n  date_skew_days: 5\n"
+    assert load_config(write_config(tmp_path, text), env={}).matching.date_skew_days == 5
+    cfg = load_config(
+        write_config(tmp_path, text), env={"SCENEHOUND_DATE_SKEW_DAYS": "1"}
+    )
+    assert cfg.matching.date_skew_days == 1  # env wins over yaml
