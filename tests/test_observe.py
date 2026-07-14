@@ -58,6 +58,7 @@ def test_snapshot_is_json_serializable_and_complete():
     assert s["candidates"][0]["detail"] == {"date": 40.0, "site": 35.0}
     assert s["outcome"]["status"] == "matched"
     assert s["outcome"]["grab"] is None
+    assert s["outcome"]["grabbed_guid"] is None
     assert snap["unmatched_grabs"] == []
     assert "shk" not in text  # no config keys can appear: they are never stored
 
@@ -81,9 +82,9 @@ SCENE = SceneFingerprint(
 )
 
 
-def _cand(guid="g1", title="TFG.26.07.07.Latex.Worship.Session.1080p"):
+def _cand(guid="g1", title="TFG.26.07.07.Latex.Worship.Session.1080p", size=1000):
     return ReleaseCandidate(title=title, guid=guid, link="http://p/dl?apikey=SECRET",
-                            size=1000, seeders=5)
+                            size=size, seeders=5)
 
 
 def _ms(conf, strong=("date", "site"), veto=None):
@@ -310,3 +311,101 @@ def test_record_import_without_any_grab_surfaces():
     u = store.snapshot()["unmatched_grabs"][0]
     assert u["grab"]["download_id"] == "GHOST"
     assert u["imported"]["movie_id"] == 3
+
+
+def _store_with_twin_titles(size_a=1000, size_b=2000):
+    # Two candidates whose rewritten titles are IDENTICAL — the real-world
+    # ambiguity this feature must survive (2026-07-14 trace).
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "That Fetish Girl 07.07.2026")
+    rec.scored([
+        (_cand("gA", "Release.A", size=size_a), SCENE, _ms(90), "SAME rewritten"),
+        (_cand("gB", "Release.B", size=size_b), SCENE, _ms(90), "SAME rewritten"),
+    ])
+    rec.commit()
+    return store
+
+
+def test_record_grab_stamps_grabbed_guid_on_unique_title_match():
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grabbed_guid"] == "g1"
+    assert s["outcome"]["grab"]["size"] == 1000
+
+
+def test_record_grab_without_size_still_stamps_unique_match():
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
+    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] == "g1"
+
+
+def test_record_grab_size_breaks_title_tie():
+    store = _store_with_twin_titles()
+    store.record_grab("SAME rewritten", "HASH1", 2000)
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grabbed_guid"] == "gB"
+    assert s["outcome"]["grab"]["download_id"] == "HASH1"
+
+
+def test_record_grab_tie_without_size_leaves_guid_none():
+    store = _store_with_twin_titles()
+    store.record_grab("SAME rewritten", "HASH1")
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grab"] is not None       # session-level grab still stamps
+    assert s["outcome"]["grabbed_guid"] is None   # UI degrades to old behavior
+
+
+def test_record_grab_unhelpful_size_leaves_guid_none():
+    # size matches neither twin
+    store = _store_with_twin_titles()
+    store.record_grab("SAME rewritten", "HASH1", 3000)
+    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] is None
+    # size matches both twins
+    store2 = _store_with_twin_titles(size_a=1000, size_b=1000)
+    store2.record_grab("SAME rewritten", "HASH2", 1000)
+    s2 = store2.snapshot()["sessions"][0]
+    assert s2["outcome"]["grab"] is not None
+    assert s2["outcome"]["grabbed_guid"] is None
+
+
+def test_record_grab_second_grab_restamps_guid():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "q")
+    rec.scored([
+        (_cand("g1", "Release.One", size=1000), SCENE, _ms(90), "Rewritten One"),
+        (_cand("g2", "Release.Two", size=2000), SCENE, _ms(85), "Rewritten Two"),
+    ])
+    rec.commit()
+    store.record_grab("Rewritten One", "HASH1", 1000)
+    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] == "g1"
+    store.record_grab("Rewritten Two", "HASH2", 2000)
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grab"]["download_id"] == "HASH2"
+    assert s["outcome"]["grabbed_guid"] == "g2"
+
+
+def test_record_grab_ambiguous_second_grab_resets_guid():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "q")
+    rec.scored([
+        (_cand("g1", "Release.One", size=1000), SCENE, _ms(90), "Rewritten One"),
+        (_cand("gA", "Release.A", size=500), SCENE, _ms(85), "SAME rewritten"),
+        (_cand("gB", "Release.B", size=500), SCENE, _ms(85), "SAME rewritten"),
+    ])
+    rec.commit()
+    store.record_grab("Rewritten One", "HASH1", 1000)
+    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] == "g1"
+    store.record_grab("SAME rewritten", "HASH2")  # ambiguous: no size, twin titles
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grab"]["download_id"] == "HASH2"
+    assert s["outcome"]["grabbed_guid"] is None   # restamped WITH the grab, never stale
+
+
+def test_record_import_leaves_grabbed_guid_unchanged():
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["imported"]["movie_id"] == 7
+    assert s["outcome"]["grabbed_guid"] == "g1"

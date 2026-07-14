@@ -115,7 +115,10 @@ Torznab endpoints) that makes each search legible:
   vs threshold). A release date up to `SCENEHOUND_DATE_SKEW_DAYS` (default 3)
   off the scene's date is forgiven when at least two other signals are
   strong; set it to 1 to disable forgiveness and restore the old hard veto
-  on any date mismatch.
+  on any date mismatch. The candidate Whisparr actually grabbed is badged in
+  place (**Grabbed**, upgrading to **Imported**); when two releases carry
+  identical rewritten titles, the grab is told apart by size, and if that's
+  still ambiguous no row is badged rather than guessing.
 - **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
   Whisparr grabs a result and **Imported** when the import-completer lands it.
 

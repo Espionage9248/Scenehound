@@ -57,6 +57,7 @@ def test_sessions_returns_snapshot_and_index():
     body = r.json()
     assert len(body["sessions"]) == 1
     assert body["unmatched_grabs"] == []
+    assert body["sessions"][0]["outcome"]["grabbed_guid"] is None
     assert body["index"]["size"] == 0
     assert body["index"]["age_seconds"] is not None
 
@@ -70,5 +71,5 @@ def test_sessions_empty_when_store_none():
 def test_ui_page_has_app_markers():
     r = TestClient(_app()).get("/ui")
     for marker in ('id="sessions"', 'id="keyform"', 'id="indexinfo"',
-                   "scenehound_apikey", "/ui/api/sessions"):
+                   "scenehound_apikey", "/ui/api/sessions", "grabbed_guid"):
         assert marker in r.text, marker
