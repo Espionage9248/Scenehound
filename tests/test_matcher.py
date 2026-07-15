@@ -362,3 +362,84 @@ def test_secondary_reading_contributes_no_points():
     undated = score(scene, "[SomeSite] Jane Doe - Solo Clip")
     assert dated.veto is None
     assert dated.confidence == undated.confidence < 100
+
+
+# --- foreign-title veto generalization: any title-less strong set ---
+# 2026-07-15 production false grab #3 (GloryholeSecrets): {date, performer} both
+# honest (Sydney Paige in both scenes; primary yyyy-mm-dd date is ±1) but the
+# candidate names a different scene AND a different studio. The {site,date}-only
+# arm did not fire. See docs/superpowers/specs/2026-07-15-foreign-title-veto-generalization-design.md
+
+GLORYHOLE_SCENE = SceneFingerprint(
+    scene_id=40,
+    site="Shoplyfter Mylf",
+    site_aliases=("Shoplyfter",),
+    date=date(2024, 6, 15),
+    title="Case No. 8002506 Bending the Right Way",
+    performers=("Sydney Paige",),
+)
+GLORYHOLE_RELEASE = (
+    "[GloryholeSecrets] Sydney Paige's First Glory Hole - Sydney Paige (2024-06-14) [2160p]"
+)
+
+
+def test_incident_date_performer_foreign_title_vetoes():
+    # The candidate agrees on date (June 14, ±1 of June 15) and performer (Sydney
+    # Paige) but its title names a different scene: 5 distinct residual tokens at
+    # ratio 36.4 (< 40). Killed by the generalized arm.
+    s = score(GLORYHOLE_SCENE, GLORYHOLE_RELEASE)
+    assert s.veto == "foreign-title"
+    assert s.strong_signals == ("date", "performer")
+    assert s.confidence == 0
+
+
+def test_date_performer_absence_still_matches():
+    # Absence is not contradiction: a bare performer + date with no foreign title
+    # tokens (residual 0) still clears on {date, performer}.
+    s = score(SCENE, "Jane Doe (2026-07-07) 1080p")
+    assert s.veto is None
+    assert {"date", "performer"} <= set(s.strong_signals)
+    assert s.confidence >= 75
+
+
+def test_date_performer_legit_recall_matches():
+    # The sole in-corpus title-less {date, performer} match: both performers +
+    # date + partial title (ratio 76.5, residual 0). Must survive the new arm.
+    s = score(SCENE, "Jane Doe & Mary Major - Latex Worship (07.07.2026) 2160p")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_date_performer_near_exact_title_is_exempt():
+    # A near-exact title promotes 'title' into strong → {date, performer, title};
+    # "title" in strong means the gate is skipped and the scene is confirmed.
+    s = score(SCENE, "Jane Doe - Latex Worship Session (2026-07-07) 1080p")
+    assert s.veto is None
+    assert "title" in s.strong_signals
+    assert s.confidence >= 75
+
+
+def test_site_date_performer_foreign_title_now_vetoes():
+    # Three attributes agree (site + date + performer) but the title is foreign
+    # (ratio 27.0, ≥3 residual). The 3-signal title-less set arms too.
+    s = score(SCENE, "ThatFetishGirl Jane Doe - Wildly Different Bondage Clip (2026-07-07) 1080p")
+    assert s.veto == "foreign-title"
+    assert s.confidence == 0
+
+
+def test_site_date_performer_corroborating_title_matches():
+    # Same three attributes, but the title corroborates (ratio 76.5 ≥ 40): match.
+    s = score(SCENE, "ThatFetishGirl Jane Doe - Latex Worship (2026-07-07) 1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_site_performer_corroborating_title_still_matches():
+    # Generalization must not regress the existing {site, performer} path: the
+    # Zarina Noir shape (residual 3 but ratio 80 ≥ 40) still matches.
+    scene = SceneFingerprint(41, "Household Fantasy", (), date(2026, 7, 7),
+                             "Big Titty Step-Sistinder Match", ("Zarina Noir",))
+    s = score(scene, "[ScottStark-HouseholdFantasy] Zarina Noir - Big Titty Step Sister Tinder Match [1080p]")
+    assert s.veto is None
+    assert {"site", "performer"} <= set(s.strong_signals)
+    assert s.confidence >= 75

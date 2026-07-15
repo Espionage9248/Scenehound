@@ -172,3 +172,19 @@
     title: "Taking Your Busty Step Daughter's Virginity"
     performers: ["Cassie Lenoir"]
   expect: no_match
+
+# --- 2026-07-15 production false grab #3: {date, performer} with a contradicting title ---
+# Sydney Paige really is in both scenes and the primary yyyy-mm-dd reading (June 14) is
+# genuinely 1 day from the wanted June 15 — date (+40) and performer (+35) are both honest,
+# so secondary-reading demotion (Layer A) does not apply. But the release plainly names a
+# different scene AND a different studio ([GloryholeSecrets] != Shoplyfter Mylf). The
+# {site,date}-only foreign-title veto did not arm for {date,performer}; the generalized
+# title-less arm kills it (5 distinct residual tokens, ratio 36.4 < 40).
+- release: "[GloryholeSecrets] Sydney Paige's First Glory Hole - Sydney Paige (2024-06-14) [2160p]"
+  scene:
+    site: "Shoplyfter Mylf"
+    aliases: ["Shoplyfter"]
+    date: 2024-06-15
+    title: "Case No. 8002506 Bending the Right Way"
+    performers: ["Sydney Paige"]
+  expect: no_match

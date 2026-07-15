@@ -66,9 +66,10 @@ def test_len():
 def test_lossless_numeric_performer_name():
     # performer name is a pure-digit token: content_tokens strips it, but the
     # matcher still matches it via squash-in-ngrams. The pre-filter must include it.
+    # Scene title is generic (1 token) so foreign-title veto does not apply.
     from scenehound.matcher import score
     scene = SceneFingerprint(50, "ExampleSite", (), date(2015, 1, 1),
-                             "Foo Bar Baz", ("2020", "2021"))
+                             "Scene", ("2020", "2021"))
     idx = WantedIndex([scene])
     release = "ExampleSite.2020.2021.ClipName.Extra.Words.Here.1080p.mp4"
     assert score(scene, release).confidence >= 75          # matcher WOULD match

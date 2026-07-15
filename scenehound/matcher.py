@@ -34,10 +34,15 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   points (detail["date_secondary_reading"] traces it): a [26-07-14] release
   must not strongly match a 2014-07-26 scene by cherry-picking the dd.mm.yy
   reading (2026-07-15 production false grab).
-- Foreign-title veto: when site+date is the ENTIRE strong set, the scene
-  title is distinctive, and the candidate carries >= 3 content tokens beyond
-  the scene's site/title/performers at near-zero title similarity, the
-  candidate names a different scene and is vetoed. Absence is not
+- Foreign-title veto: when the strong set is title-less (any pair or triple of
+  site/date/performer, with no title match), the scene title is distinctive,
+  and the candidate carries >= 3 DISTINCT content tokens beyond the scene's
+  site/title/performers at title similarity below _FOREIGN_TITLE_RATIO (40),
+  the candidate names a different scene and is vetoed. A title-less set confirms
+  only colliding attributes — a performer confirms a person, not the scene — so
+  a {date, performer} grab of the right person on the right day with a foreign
+  title is a false positive (2026-07-15 GloryholeSecrets grab). A strong set
+  containing "title" is exempt (the title confirms the scene). Absence is not
   contradiction — a bare Site.YY.MM.DD release (no residual) still matches;
   2 residual tokens are routinely filler ("Bonus Scene") and forgiven.
 """
@@ -59,7 +64,10 @@ STRONG_TITLE = 40
 TITLE_MAX = 25
 SINGLE_SIGNAL_CAP = 65
 _TITLE_RATIO_GATE = 60
-_FOREIGN_TITLE_RATIO = 35     # below this, the candidate's own words read as a different scene
+_FOREIGN_TITLE_RATIO = 40     # below this, the candidate's own words read as a different scene.
+#                               Raised from 35 (2026-07-15 GloryholeSecrets grab: a generic scene
+#                               title "case no … the right way" fuzz-aligns to 36.4 against foreign
+#                               words — not real corroboration).
 _MIN_FOREIGN_RESIDUAL = 3     # candidate content tokens beyond scene site/title/performers;
 #                               2 is routinely filler ("Bonus Scene"), 3+ is a foreign title
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
@@ -194,15 +202,20 @@ def score(
         return MatchScore(0, (), "date-mismatch", {"date": 0.0})
 
     # --- foreign-title veto ---
-    # {site, date} is the only strong pair with no content confirmation: on a
-    # studio's own feed the site name discriminates nothing, and dates collide
-    # across ambiguous stamps and same-day siblings. When the candidate carries
-    # enough of its own words — beyond the scene's site, title, and performers —
-    # with near-zero title similarity, it names a DIFFERENT scene. Absence is
-    # not contradiction: a bare Site.YY.MM.DD release has no residual and
-    # still matches on site+date.
+    # A title-less strong set (any pair or triple of site/date/performer, no
+    # title match) confirms only attributes that can independently collide: the
+    # site discriminates nothing on a studio's own feed, dates collide across
+    # ambiguous stamps and same-day siblings, and a performer confirms a person,
+    # not the specific scene (Sydney Paige is in many releases). When the
+    # candidate carries enough of its own words — beyond the scene's site, title,
+    # and performers — at near-zero title similarity, it names a DIFFERENT scene.
+    # Only a title match (which would put "title" in strong) confirms the scene,
+    # so a strong set containing "title" is exempt. Absence is not contradiction:
+    # a bare Performer.YYYY.MM.DD or Site.YY.MM.DD release has no residual and
+    # still matches.
     if (
-        set(strong) == {"date", "site"}
+        len(strong) >= 2
+        and "title" not in strong
         and len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS
         and (title_ratio is None or title_ratio < _FOREIGN_TITLE_RATIO)
     ):
