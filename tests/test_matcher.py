@@ -251,3 +251,61 @@ def test_skew_window_one_restores_hard_veto():
     s = score(SCENE, "ThatFetishGirl.2026-07-09.Latex.Worship.Session.Jane.Doe",
               date_skew_days=1)
     assert s.veto == "date-mismatch"
+
+
+# --- secondary-reading date demotion (2026-07-15 production false grab) ---
+
+INCIDENT_SCENE = SceneFingerprint(
+    scene_id=30,
+    site="Family Therapy XXX",
+    site_aliases=("Family Therapy",),
+    date=date(2014, 7, 25),
+    title="Slut Training Day",
+    performers=(),
+)
+INCIDENT_RELEASE = (
+    "[FamilyTherapy] Alexa Chains - The Goth Latina Experience [26-07-14] [1080p]"
+)
+
+
+def test_incident_secondary_reading_date_is_not_strong():
+    # Production false grab 2026-07-15: [26-07-14] is 2026-07-14 in the
+    # uploader's yy-mm-dd; the dd-mm-yy alternate (2014-07-26) sat 1 day from
+    # the scene and fabricated a strong date next to the site hit (40+35=75).
+    # Demoted: site alone stays capped under threshold.
+    s = score(INCIDENT_SCENE, INCIDENT_RELEASE)
+    assert s.veto is None                      # alternate reading forgives the veto
+    assert "date" not in s.strong_signals
+    assert s.strong_signals == ("site",)
+    assert s.confidence < 75
+
+
+def test_secondary_reading_traced_not_scored():
+    s = score(INCIDENT_SCENE, INCIDENT_RELEASE)
+    assert s.detail["date_secondary_reading"] == 1.0
+    assert "date" not in s.detail  # zero points from the date
+
+
+def test_secondary_reading_forgives_veto_for_ddmmyy_uploaders():
+    # Honest dd.mm.yy uploader: the dominant yy.mm.dd reading of [14-07-26]
+    # contradicts (2014-07-26), the alternate matches exactly (2026-07-14) →
+    # no veto; the match is carried by site+performer+title.
+    scene = SceneFingerprint(31, "Some Site", (), date(2026, 7, 14),
+                             "Latex Worship Session", ("Jane Doe",))
+    s = score(scene, "[SomeSite] Jane Doe - Latex Worship Session [14-07-26] [1080p]")
+    assert s.veto is None
+    assert "date" not in s.strong_signals
+    assert {"site", "performer"} <= set(s.strong_signals)
+    assert s.detail["date_secondary_reading"] == 1.0
+    assert s.confidence >= 75
+
+
+def test_secondary_reading_contributes_no_points():
+    # Same construction as test_forgiven_date_contributes_no_points: keep the
+    # total below the min(100, …) clamp so a leaked point would show.
+    scene = SceneFingerprint(31, "Some Site", (), date(2026, 7, 14),
+                             "Latex Worship Session", ("Jane Doe",))
+    dated = score(scene, "[SomeSite] Jane Doe - Solo Clip [14-07-26]")
+    undated = score(scene, "[SomeSite] Jane Doe - Solo Clip")
+    assert dated.veto is None
+    assert dated.confidence == undated.confidence < 100

@@ -27,6 +27,13 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   rip/upload dates a few days off the studio release date. A forgiven date
   contributes no points; the skew is recorded in detail["date_skew_days"]
   for the UI trace.
+- Only a PRIMARY-reading date — the dominant convention of its format
+  (yy.mm.dd for two-digit triples, yyyy.mm.dd, dd.mm.yyyy) — can be a strong
+  signal. A date matched only via an alternate reading of an ambiguous
+  ordering forgives the date veto but is never strong and contributes no
+  points (detail["date_secondary_reading"] traces it): a [26-07-14] release
+  must not strongly match a 2014-07-26 scene by cherry-picking the dd.mm.yy
+  reading (2026-07-15 production false grab).
 """
 from __future__ import annotations
 
@@ -117,15 +124,20 @@ def score(
     strong: list[str] = []
 
     # --- date ---
-    title_dates = extract_dates(title).all
-    date_off: int | None = None  # smallest days-off when no title date is within ±1
-    if title_dates:
-        off = min(abs((d - scene.date).days) for d in title_dates)
-        if off <= 1:
+    extracted = extract_dates(title)
+    date_off: int | None = None  # smallest days-off when no reading is within ±1
+    date_secondary = False
+    if extracted.all:
+        if any(abs((d - scene.date).days) <= 1 for d in extracted.primary):
             strong.append("date")
             detail["date"] = STRONG_DATE
+        elif any(abs((d - scene.date).days) <= 1 for d in extracted.secondary):
+            # Matched only via an alternate reading of an ambiguous ordering
+            # (e.g. dd.mm.yy of a yy.mm.dd stamp): forgives the veto, never
+            # strong, contributes no points. Flag recorded after summation.
+            date_secondary = True
         else:
-            date_off = off
+            date_off = min(abs((d - scene.date).days) for d in extracted.all)
 
     # --- site ---
     if _site_in_title(ngrams, scene):
@@ -176,4 +188,6 @@ def score(
         total = min(total, SINGLE_SIGNAL_CAP)
     if date_off is not None:
         detail["date_skew_days"] = float(date_off)  # trace metadata, not points
+    if date_secondary:
+        detail["date_secondary_reading"] = 1.0  # trace metadata, not points
     return MatchScore(min(100, round(total)), tuple(strong), None, detail)
