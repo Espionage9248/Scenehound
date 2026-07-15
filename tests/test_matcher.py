@@ -181,13 +181,62 @@ def test_date_plus_generic_title_only_does_not_match():
     assert s.confidence <= SINGLE_SIGNAL_CAP
 
 
-def test_site_plus_date_without_title_overlap_still_matches():
-    # Two strong signals (site + date), no title-word overlap — unchanged 75.
+def test_site_plus_date_with_foreign_title_now_vetoes():
+    # Pre-2026-07-15 this pinned "site+date, no title overlap → 75". The
+    # production false grab proved the class dangerous: three residual content
+    # tokens naming a different clip are contradiction, not absence.
     scene = SceneFingerprint(27, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
                              "Latex Worship Session", ())
     s = score(scene, "ThatFetishGirl.2026-07-07.Unrelated.Clip.Name.1080p")
+    assert s.veto == "foreign-title"
+    assert s.confidence < 75
+
+
+# --- foreign-title veto (contradiction, not absence) ---
+
+
+def test_foreign_title_vetoes_site_date_pair():
+    # Same class as the incident but via a primary-reading date collision:
+    # site+date agree, yet the candidate names a different scene outright.
+    s = score(
+        INCIDENT_SCENE,
+        "[FamilyTherapy] Alexa Chains - The Goth Latina Experience [14-07-25] [1080p]",
+    )
+    assert s.veto == "foreign-title"
+    assert s.confidence == 0
+
+
+def test_bare_site_date_release_still_matches():
+    # Absence is not contradiction: zero residual tokens → site+date clears.
+    s = score(INCIDENT_SCENE, "FamilyTherapy.14.07.25.XXX.1080p")
+    assert s.veto is None
     assert {"date", "site"} <= set(s.strong_signals)
-    assert "title" not in s.strong_signals
+    assert s.confidence >= 75
+
+
+def test_two_residual_filler_tokens_do_not_veto():
+    # "Bonus Scene"-style filler (2 residual tokens, ratio 34.8) is
+    # absence-adjacent, not a foreign title — the decorative-xxx corpus entry
+    # and losslessness test depend on this staying a match.
+    scene = SceneFingerprint(54, "Family Therapy", ("Family Therapy XXX",),
+                             date(2026, 7, 7), "The Massage Lesson", ("Jane Doe",))
+    s = score(scene, "FamilyTherapyXXX.26.07.07.Bonus.Scene.XXX.1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_fuzzy_title_overlap_defuses_foreign_veto():
+    # Partial title overlap (ratio 76.5) corroborates: not a foreign title.
+    s = score(SCENE, "ThatFetishGirl.2026-07-07.Latex.Worship.Compilation.1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_generic_scene_title_skips_foreign_veto():
+    # A 1-content-token scene title can't establish contradiction.
+    scene = SceneFingerprint(33, "That Fetish Girl", (), date(2026, 7, 7), "Casting", ())
+    s = score(scene, "ThatFetishGirl.2026-07-07.Totally.Different.Words.1080p")
+    assert s.veto is None
     assert s.confidence >= 75
 
 
