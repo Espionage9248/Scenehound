@@ -27,6 +27,19 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   rip/upload dates a few days off the studio release date. A forgiven date
   contributes no points; the skew is recorded in detail["date_skew_days"]
   for the UI trace.
+- Only a PRIMARY-reading date — the dominant convention of its format
+  (yy.mm.dd for two-digit triples, yyyy.mm.dd, dd.mm.yyyy) — can be a strong
+  signal. A date matched only via an alternate reading of an ambiguous
+  ordering forgives the date veto but is never strong and contributes no
+  points (detail["date_secondary_reading"] traces it): a [26-07-14] release
+  must not strongly match a 2014-07-26 scene by cherry-picking the dd.mm.yy
+  reading (2026-07-15 production false grab).
+- Foreign-title veto: when site+date is the ENTIRE strong set, the scene
+  title is distinctive, and the candidate carries >= 3 content tokens beyond
+  the scene's site/title/performers at near-zero title similarity, the
+  candidate names a different scene and is vetoed. Absence is not
+  contradiction — a bare Site.YY.MM.DD release (no residual) still matches;
+  2 residual tokens are routinely filler ("Bonus Scene") and forgiven.
 """
 from __future__ import annotations
 
@@ -46,6 +59,9 @@ STRONG_TITLE = 40
 TITLE_MAX = 25
 SINGLE_SIGNAL_CAP = 65
 _TITLE_RATIO_GATE = 60
+_FOREIGN_TITLE_RATIO = 35     # below this, the candidate's own words read as a different scene
+_MIN_FOREIGN_RESIDUAL = 3     # candidate content tokens beyond scene site/title/performers;
+#                               2 is routinely filler ("Bonus Scene"), 3+ is a foreign title
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
 _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a strong signal
 _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram;
@@ -117,15 +133,20 @@ def score(
     strong: list[str] = []
 
     # --- date ---
-    title_dates = extract_dates(title)
-    date_off: int | None = None  # smallest days-off when no title date is within ±1
-    if title_dates:
-        off = min(abs((d - scene.date).days) for d in title_dates)
-        if off <= 1:
+    extracted = extract_dates(title)
+    date_off: int | None = None  # smallest days-off when no reading is within ±1
+    date_secondary = False
+    if extracted.all:
+        if any(abs((d - scene.date).days) <= 1 for d in extracted.primary):
             strong.append("date")
             detail["date"] = STRONG_DATE
+        elif any(abs((d - scene.date).days) <= 1 for d in extracted.secondary):
+            # Matched only via an alternate reading of an ambiguous ordering
+            # (e.g. dd.mm.yy of a yy.mm.dd stamp): forgives the veto, never
+            # strong, contributes no points. Flag recorded after summation.
+            date_secondary = True
         else:
-            date_off = off
+            date_off = min(abs((d - scene.date).days) for d in extracted.all)
 
     # --- site ---
     if _site_in_title(ngrams, scene):
@@ -145,6 +166,7 @@ def score(
     # --- title similarity ---
     scene_ctoks = content_tokens(scene.title)
     cand_ctoks = content_tokens(title)
+    title_ratio: float | None = None
     if scene_ctoks and cand_ctoks:
         cand_ctok_set = set(cand_ctoks)
         near_exact = len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS and all(
@@ -158,9 +180,9 @@ def score(
             strong.append("title")
             detail["title"] = STRONG_TITLE
         else:
-            ratio = fuzz.token_set_ratio(" ".join(scene_ctoks), " ".join(cand_ctoks))
-            if ratio >= _TITLE_RATIO_GATE:
-                detail["title"] = ratio / 100.0 * TITLE_MAX
+            title_ratio = fuzz.token_set_ratio(" ".join(scene_ctoks), " ".join(cand_ctoks))
+            if title_ratio >= _TITLE_RATIO_GATE:
+                detail["title"] = title_ratio / 100.0 * TITLE_MAX
 
     # --- date veto, decided after the other signals ---
     # A mismatched date is forgiven only when the skew is small (uploaders
@@ -171,9 +193,31 @@ def score(
     if date_off is not None and (date_off > date_skew_days or len(strong) < 2):
         return MatchScore(0, (), "date-mismatch", {"date": 0.0})
 
+    # --- foreign-title veto ---
+    # {site, date} is the only strong pair with no content confirmation: on a
+    # studio's own feed the site name discriminates nothing, and dates collide
+    # across ambiguous stamps and same-day siblings. When the candidate carries
+    # enough of its own words — beyond the scene's site, title, and performers —
+    # with near-zero title similarity, it names a DIFFERENT scene. Absence is
+    # not contradiction: a bare Site.YY.MM.DD release has no residual and
+    # still matches on site+date.
+    if (
+        set(strong) == {"date", "site"}
+        and len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS
+        and (title_ratio is None or title_ratio < _FOREIGN_TITLE_RATIO)
+    ):
+        known = set(scene_ctoks)
+        for name in (scene.site, *scene.site_aliases, *scene.performers):
+            known.update(tokenize(name))
+            known.add(squash(name))  # glued forms: "[FamilyTherapy]" is not foreign
+        if sum(1 for t in set(cand_ctoks) if t not in known) >= _MIN_FOREIGN_RESIDUAL:
+            return MatchScore(0, tuple(strong), "foreign-title", detail)
+
     total = sum(detail.values())
     if len(strong) < 2:
         total = min(total, SINGLE_SIGNAL_CAP)
     if date_off is not None:
         detail["date_skew_days"] = float(date_off)  # trace metadata, not points
+    if date_secondary:
+        detail["date_secondary_reading"] = 1.0  # trace metadata, not points
     return MatchScore(min(100, round(total)), tuple(strong), None, detail)

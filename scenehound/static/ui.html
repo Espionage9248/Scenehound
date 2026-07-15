@@ -118,6 +118,7 @@ const STRONG_TEXT = {
 const VETO_TEXT = {
   "date-mismatch": "Rejected: the release's date is too far from the scene's — or the match is too weak to forgive the gap.",
   "site-mismatch": "Rejected: the title names a different studio from your wanted list.",
+  "foreign-title": "Rejected: the release names a different scene — its title and performers don't match, and studio + date alone can't carry it.",
 };
 function whyLines(c, threshold) {
   const out = [];
@@ -131,6 +132,8 @@ function whyLines(c, threshold) {
   }
   if (c.detail.date_skew_days != null)
     out.push(`<span class="warn">⚠ Release date is ${c.detail.date_skew_days} day(s) off the scene's — forgiven: ${c.strong_signals.length} other strong signals.</span>`);
+  if (c.detail.date_secondary_reading != null)
+    out.push(`<span class="warn">⚠ Date matches only via an alternate reading of an ambiguous format (e.g. dd-mm-yy vs yy-mm-dd) — not counted as a strong signal.</span>`);
   if (!c.strong_signals.includes("title") && c.detail.title != null)
     out.push(`Title is similar (+${c.detail.title.toFixed(1)})`);
   if (c.strong_signals.length === 1)

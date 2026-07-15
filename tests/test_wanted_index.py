@@ -149,3 +149,12 @@ def test_ngram_window_couples_index_and_matcher():
     from scenehound.wanted_index import _MAX_NAME_TOKENS
 
     assert _MAX_NAME_TOKENS >= _MAX_SITE_TOKENS
+
+
+def test_lossless_secondary_reading_date_bucket():
+    # 26-07-14 read as dd.mm.yy is 2014-07-26; the pre-filter must keep scenes
+    # reachable only via that alternate reading (matcher veto-forgiveness and
+    # skew handling depend on seeing the candidate at all).
+    scene = SceneFingerprint(55, "ExampleSite", (), date(2014, 7, 26), "Foo Bar Baz", ())
+    idx = WantedIndex([scene])
+    assert scene in idx.candidates_for_title("Random.Words.26-07-14.Clip.1080p")

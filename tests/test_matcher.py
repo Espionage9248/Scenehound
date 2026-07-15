@@ -181,13 +181,66 @@ def test_date_plus_generic_title_only_does_not_match():
     assert s.confidence <= SINGLE_SIGNAL_CAP
 
 
-def test_site_plus_date_without_title_overlap_still_matches():
-    # Two strong signals (site + date), no title-word overlap — unchanged 75.
+def test_site_plus_date_with_foreign_title_now_vetoes():
+    # Pre-2026-07-15 this pinned "site+date, no title overlap → 75". The
+    # production false grab proved the class dangerous: three residual content
+    # tokens naming a different clip are contradiction, not absence.
     scene = SceneFingerprint(27, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
                              "Latex Worship Session", ())
     s = score(scene, "ThatFetishGirl.2026-07-07.Unrelated.Clip.Name.1080p")
+    assert s.veto == "foreign-title"
+    assert s.confidence < 75
+
+
+# --- foreign-title veto (contradiction, not absence) ---
+
+
+def test_foreign_title_vetoes_site_date_pair():
+    # Same class as the incident but via a primary-reading date collision:
+    # site+date agree, yet the candidate names a different scene outright.
+    s = score(
+        INCIDENT_SCENE,
+        "[FamilyTherapy] Alexa Chains - The Goth Latina Experience [14-07-25] [1080p]",
+    )
+    assert s.veto == "foreign-title"
+    assert s.confidence == 0
+
+
+def test_bare_site_date_release_still_matches():
+    # Absence is not contradiction: zero residual tokens → site+date clears.
+    s = score(INCIDENT_SCENE, "FamilyTherapy.14.07.25.XXX.1080p")
+    assert s.veto is None
     assert {"date", "site"} <= set(s.strong_signals)
-    assert "title" not in s.strong_signals
+    assert s.confidence >= 75
+
+
+def test_two_residual_filler_tokens_do_not_veto():
+    # "Bonus Scene"-style filler (2 residual tokens, ratio 34.8) is
+    # absence-adjacent, not a foreign title — the decorative-xxx corpus entry
+    # and losslessness test depend on this staying a match.
+    scene = SceneFingerprint(54, "Family Therapy", ("Family Therapy XXX",),
+                             date(2026, 7, 7), "The Massage Lesson", ("Jane Doe",))
+    s = score(scene, "FamilyTherapyXXX.26.07.07.Bonus.Scene.XXX.1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
+    # Repeated filler must not inflate the residual count past the gate.
+    s = score(scene, "FamilyTherapyXXX.26.07.07.Bonus.Scene.Bonus.XXX.1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_fuzzy_title_overlap_defuses_foreign_veto():
+    # Partial title overlap (ratio 76.5) corroborates: not a foreign title.
+    s = score(SCENE, "ThatFetishGirl.2026-07-07.Latex.Worship.Compilation.1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_generic_scene_title_skips_foreign_veto():
+    # A 1-content-token scene title can't establish contradiction.
+    scene = SceneFingerprint(33, "That Fetish Girl", (), date(2026, 7, 7), "Casting", ())
+    s = score(scene, "ThatFetishGirl.2026-07-07.Totally.Different.Words.1080p")
+    assert s.veto is None
     assert s.confidence >= 75
 
 
@@ -251,3 +304,61 @@ def test_skew_window_one_restores_hard_veto():
     s = score(SCENE, "ThatFetishGirl.2026-07-09.Latex.Worship.Session.Jane.Doe",
               date_skew_days=1)
     assert s.veto == "date-mismatch"
+
+
+# --- secondary-reading date demotion (2026-07-15 production false grab) ---
+
+INCIDENT_SCENE = SceneFingerprint(
+    scene_id=30,
+    site="Family Therapy XXX",
+    site_aliases=("Family Therapy",),
+    date=date(2014, 7, 25),
+    title="Slut Training Day",
+    performers=(),
+)
+INCIDENT_RELEASE = (
+    "[FamilyTherapy] Alexa Chains - The Goth Latina Experience [26-07-14] [1080p]"
+)
+
+
+def test_incident_secondary_reading_date_is_not_strong():
+    # Production false grab 2026-07-15: [26-07-14] is 2026-07-14 in the
+    # uploader's yy-mm-dd; the dd-mm-yy alternate (2014-07-26) sat 1 day from
+    # the scene and fabricated a strong date next to the site hit (40+35=75).
+    # Demoted: site alone stays capped under threshold.
+    s = score(INCIDENT_SCENE, INCIDENT_RELEASE)
+    assert s.veto is None                      # alternate reading forgives the veto
+    assert "date" not in s.strong_signals
+    assert s.strong_signals == ("site",)
+    assert s.confidence < 75
+
+
+def test_secondary_reading_traced_not_scored():
+    s = score(INCIDENT_SCENE, INCIDENT_RELEASE)
+    assert s.detail["date_secondary_reading"] == 1.0
+    assert "date" not in s.detail  # zero points from the date
+
+
+def test_secondary_reading_forgives_veto_for_ddmmyy_uploaders():
+    # Honest dd.mm.yy uploader: the dominant yy.mm.dd reading of [14-07-26]
+    # contradicts (2014-07-26), the alternate matches exactly (2026-07-14) →
+    # no veto; the match is carried by site+performer+title.
+    scene = SceneFingerprint(31, "Some Site", (), date(2026, 7, 14),
+                             "Latex Worship Session", ("Jane Doe",))
+    s = score(scene, "[SomeSite] Jane Doe - Latex Worship Session [14-07-26] [1080p]")
+    assert s.veto is None
+    assert "date" not in s.strong_signals
+    assert {"site", "performer"} <= set(s.strong_signals)
+    assert s.detail["date_secondary_reading"] == 1.0
+    assert s.confidence >= 75
+
+
+def test_secondary_reading_contributes_no_points():
+    # Same construction as test_forgiven_date_contributes_no_points: keep the
+    # total below the min(100, …) clamp so a leaked point would show.
+    scene = SceneFingerprint(31, "Some Site", (), date(2026, 7, 14),
+                             "Latex Worship Session", ("Jane Doe",))
+    dated = score(scene, "[SomeSite] Jane Doe - Solo Clip [14-07-26]")
+    undated = score(scene, "[SomeSite] Jane Doe - Solo Clip")
+    assert dated.veto is None
+    assert dated.confidence == undated.confidence < 100
