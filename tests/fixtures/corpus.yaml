@@ -136,3 +136,23 @@
 - release: "ThatFetishGirl.2026-07-12.Latex.Worship.Session.Jane.Doe"  # 5 days off: beyond skew window, vetoed
   scene: *latex
   expect: no_match
+
+# --- 2026-07-15 production false grab: ambiguous yy-mm-dd cherry-picked as dd-mm-yy ---
+# [26-07-14] is 2026-07-14 (uploader's yy-mm-dd); the dd-mm-yy alternate 2014-07-26
+# sat 1 day from the wanted scene and fabricated a strong date beside the site hit
+# (40+35=75, grabbed and imported). The true scene wasn't on StashDB yet — the only
+# correct outcome is NO match. Killed by secondary-reading demotion.
+- release: "[FamilyTherapy] Alexa Chains - The Goth Latina Experience [26-07-14] [1080p]"
+  scene: &slut_training
+    site: "Family Therapy XXX"
+    aliases: ["Family Therapy"]
+    date: 2014-07-25
+    title: "Slut Training Day"
+  expect: no_match
+
+# Same candidate with a primary-reading date collision (yy-mm-dd lands exactly on the
+# scene's date): site+date agree but the release plainly names a different scene.
+# Killed by the foreign-title veto.
+- release: "[FamilyTherapy] Alexa Chains - The Goth Latina Experience [14-07-25] [1080p]"
+  scene: *slut_training
+  expect: no_match
