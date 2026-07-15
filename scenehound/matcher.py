@@ -210,7 +210,7 @@ def score(
         for name in (scene.site, *scene.site_aliases, *scene.performers):
             known.update(tokenize(name))
             known.add(squash(name))  # glued forms: "[FamilyTherapy]" is not foreign
-        if sum(1 for t in cand_ctoks if t not in known) >= _MIN_FOREIGN_RESIDUAL:
+        if sum(1 for t in set(cand_ctoks) if t not in known) >= _MIN_FOREIGN_RESIDUAL:
             return MatchScore(0, tuple(strong), "foreign-title", detail)
 
     total = sum(detail.values())

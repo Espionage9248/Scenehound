@@ -223,6 +223,10 @@ def test_two_residual_filler_tokens_do_not_veto():
     s = score(scene, "FamilyTherapyXXX.26.07.07.Bonus.Scene.XXX.1080p")
     assert s.veto is None
     assert s.confidence >= 75
+    # Repeated filler must not inflate the residual count past the gate.
+    s = score(scene, "FamilyTherapyXXX.26.07.07.Bonus.Scene.Bonus.XXX.1080p")
+    assert s.veto is None
+    assert s.confidence >= 75
 
 
 def test_fuzzy_title_overlap_defuses_foreign_veto():

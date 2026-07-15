@@ -12,7 +12,8 @@ _MIN_YEAR, _MAX_YEAR = 1990, 2049
 _QUERY_RE = re.compile(r"^(?P<site>.*\S)\s+(?P<a>\d{2})\.(?P<b>\d{2})\.(?P<y>\d{4})$")
 
 _SEP = r"[.\-_/ ]"
-# Order matters only for readability; results are set-unioned.
+# Group order within each regex determines reading rank: the dominant
+# convention's reading is primary, alternate orderings are secondary.
 _YMD4 = re.compile(rf"(?<![\d])(\d{{4}}){_SEP}(\d{{1,2}}){_SEP}(\d{{1,2}})(?![\d])")
 _XY4 = re.compile(rf"(?<![\d])(\d{{1,2}}){_SEP}(\d{{1,2}}){_SEP}(\d{{4}})(?![\d])")
 _TRIPLE2 = re.compile(rf"(?<![\d])(\d{{2}}){_SEP}(\d{{2}}){_SEP}(\d{{2}})(?![\d])")
