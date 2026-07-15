@@ -127,11 +127,17 @@ all of:
 
 1. the scene title is distinctive: `len(content_tokens(scene.title)) >=
    _MIN_TITLE_STRONG_TOKENS` (reuses the existing constant, 2);
-2. the candidate's **residual tokens** number ≥ `_MIN_FOREIGN_RESIDUAL` (2),
-   where residual = `content_tokens(candidate)` minus tokens of the scene's
-   site and every alias, minus `content_tokens(scene.title)`, minus tokens of
-   every scene performer name (tokens, not n-grams: a partial performer
-   presence — first name only — is neither a hit nor foreign evidence);
+2. the candidate's **residual tokens** number ≥ `_MIN_FOREIGN_RESIDUAL`
+   (**3**, not the 2 originally drafted: the corpus's legitimate
+   `FamilyTherapyXXX.26.07.07.Bonus.Scene.XXX.1080p` entry — the xxx-suffix
+   toggle case where site+date is deliberately load-bearing — carries exactly
+   2 filler residual tokens at ratio 34.8; two leftover tokens are routinely
+   filler, three-plus is evidence of a different title). Residual =
+   `content_tokens(candidate)` minus tokens *and squashed forms* of the
+   scene's site and every alias (glued `[FamilyTherapy]` must not count as
+   foreign), minus `content_tokens(scene.title)`, minus tokens and squashed
+   forms of every scene performer name (a partial performer presence — first
+   name only — is neither a hit nor foreign evidence);
 3. the fuzzy title ratio is below `_FOREIGN_TITLE_RATIO` (35) — computed in
    the title block regardless of the existing `_TITLE_RATIO_GATE`; no
    performer hit is implied by the strong-pair condition.
@@ -187,8 +193,10 @@ veto) in the same style as the existing bullets.
 - Primary date unchanged: ±1 primary → strong, `STRONG_DATE`.
 - Secondary + site only → confidence capped at 65, no strong date.
 - Foreign-title veto: site + primary-reading date, distinctive scene title,
-  candidate names a different title with ≥2 residual tokens, ratio < 35 →
+  candidate names a different title with ≥3 residual tokens, ratio < 35 →
   veto `foreign-title`.
+- Threshold guard: 2 residual filler tokens (`Bonus.Scene`, the xxx-suffix
+  corpus case) → no veto, still matches on site+date.
 - Absence still matches: `Site.YY.MM.DD.XXX.1080p` (zero residual) → site+date
   clears as today.
 - No veto when fuzzy title corroborates (ratio ≥ 35) or performer hits.
