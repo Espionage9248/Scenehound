@@ -57,24 +57,47 @@ def parse_query_term(term: str) -> ParsedQuery | None:
     return ParsedQuery(site_token=m["site"], dates=tuple(dates))
 
 
-def extract_dates(text: str) -> frozenset[date]:
-    """Every plausible date found in a release title, across formats, with
-    both interpretations of ambiguous day/month orderings."""
-    found: set[date] = set()
+@dataclass(frozen=True)
+class ExtractedDates:
+    """Dates found in a release title, ranked by reading plausibility.
+
+    primary: produced by the dominant convention of their format (yy.mm.dd
+    for two-digit triples, yyyy.mm.dd, dd.mm.yyyy). secondary: reachable only
+    via an alternate reading of an ambiguous ordering. Disjoint — a date
+    reachable both ways is primary."""
+
+    primary: frozenset[date]
+    secondary: frozenset[date]
+
+    @property
+    def all(self) -> frozenset[date]:
+        return self.primary | self.secondary
+
+
+def extract_dates(text: str) -> ExtractedDates:
+    """Every plausible date found in a release title, across formats, ranked
+    by reading. The matcher lets only primary dates become strong signals
+    (a 26-07-14 release must not strongly match a 2014-07-26 scene); the
+    wanted-index pre-filter uses .all to stay a lossless superset."""
+    prim: set[date] = set()
+    sec: set[date] = set()
     for m in _YMD4.finditer(text):
         y, b, c = int(m[1]), int(m[2]), int(m[3])
-        for mo, dy in ((b, c), (c, b)):
-            if d := _valid(y, mo, dy):
-                found.add(d)
+        if d := _valid(y, b, c):  # yyyy.mm.dd (dominant)
+            prim.add(d)
+        if d := _valid(y, c, b):  # yyyy.dd.mm
+            sec.add(d)
     for m in _XY4.finditer(text):
         a, b, y = int(m[1]), int(m[2]), int(m[3])
-        for mo, dy in ((b, a), (a, b)):
-            if d := _valid(y, mo, dy):
-                found.add(d)
+        if d := _valid(y, b, a):  # dd.mm.yyyy (dominant; parse_query_term precedent)
+            prim.add(d)
+        if d := _valid(y, a, b):  # mm.dd.yyyy
+            sec.add(d)
     for m in _TRIPLE2.finditer(text):
         a, b, c = int(m[1]), int(m[2]), int(m[3])
-        # yy.mm.dd (dominant scene convention), dd.mm.yy, mm.dd.yy
-        for y2, mo, dy in ((a, b, c), (c, b, a), (c, a, b)):
+        if d := _valid(_expand_two_digit_year(a), b, c):  # yy.mm.dd (dominant scene convention)
+            prim.add(d)
+        for y2, mo, dy in ((c, b, a), (c, a, b)):  # dd.mm.yy, mm.dd.yy
             if d := _valid(_expand_two_digit_year(y2), mo, dy):
-                found.add(d)
-    return frozenset(found)
+                sec.add(d)
+    return ExtractedDates(frozenset(prim), frozenset(sec - prim))

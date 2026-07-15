@@ -90,7 +90,7 @@ class WantedIndex:
         # retain them UNCONDITIONALLY (never truncated). Only token-only hits
         # (scenes hit by a token but not already in a date bucket) are bounded.
         date_hits: dict[int, SceneFingerprint] = {}
-        for d in extract_dates(title):
+        for d in extract_dates(title).all:
             for delta in (-1, 0, 1):
                 for s in self._by_date.get(d + timedelta(days=delta), []):
                     date_hits[s.scene_id] = s

@@ -117,7 +117,7 @@ def score(
     strong: list[str] = []
 
     # --- date ---
-    title_dates = extract_dates(title)
+    title_dates = extract_dates(title).all
     date_off: int | None = None  # smallest days-off when no title date is within ±1
     if title_dates:
         off = min(abs((d - scene.date).days) for d in title_dates)
