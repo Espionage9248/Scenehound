@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from scenehound.models import SceneFingerprint
 
@@ -97,19 +97,29 @@ class ImportEvent:
 
 
 @dataclass
+class GrabRecord:
+    # One grab correlated to this session. Mutable for the same reason as
+    # Outcome: the import stamp arrives later than the grab.
+    grab: GrabEvent
+    # guid of the candidate this grab correlated to; None when ambiguous
+    # (identical titles, size missing or unhelpful) — the UI then shows this
+    # grab at session level only, with no row badge.
+    grabbed_guid: str | None = None
+    imported: ImportEvent | None = None
+
+
+@dataclass
 class Outcome:
-    # Deliberately mutable: grab/imported are stamped AFTER the session commits
+    # Deliberately mutable: grabs are stamped AFTER the session commits
     # (webhook and import-completer arrive later). Everything else is frozen.
     status: str = "empty"            # matched | empty | error | rss-summary
     matched_count: int = 0
     items_total: int = 0             # RSS only
     rewritten: int = 0               # RSS only
-    grab: GrabEvent | None = None
-    imported: ImportEvent | None = None
-    # guid of the candidate the grab correlated to; None when the grab was
-    # ambiguous (identical titles, size missing or unhelpful) — the UI then
-    # degrades to session-level display only.
-    grabbed_guid: str | None = None
+    # One record per grab: several candidates of one session can each be
+    # grabbed (and each import independently). Replaces the v0.2.0 single
+    # grab/grabbed_guid/imported slots whose second grab overwrote the first.
+    grabs: list[GrabRecord] = field(default_factory=list)
 
 
 @dataclass
@@ -164,29 +174,39 @@ class SessionStore:
     def recorder(self, slug: str, threshold: int, raw_query: str) -> "Recorder":
         return Recorder(self, slug, threshold, raw_query)
 
+    @staticmethod
+    def _correlate_guid(matches, size: int | None) -> str | None:
+        if len(matches) == 1:
+            return matches[0].guid
+        if size is not None:
+            # Twin releases of one scene can rewrite to identical titles;
+            # the webhook's size is what tells them apart.
+            by_size = [c for c in matches if c.size == size]
+            if len(by_size) == 1:
+                return by_size[0].guid
+        return None
+
     @_shielded
     def record_grab(self, release_title: str, download_id: str,
                     size: int | None = None) -> None:
         ev = GrabEvent(release_title, download_id, time.time(), size)
-        # Accepted limitation (v0.2.0): if a second grab correlates to the
-        # same session, it overwrites outcome.grab here; the earlier grab's
-        # import (if any) then surfaces via unmatched_grabs instead of being
-        # lost silently. grabbed_guid is restamped together with grab
-        # (possibly back to None) so the pair can never drift apart.
         for s in self._sessions:  # deque is newest-first already
             matches = [c for c in s.candidates
                        if release_title and (c.rewritten_title == release_title
                                              or c.title == release_title)]
             if not matches:
                 continue
-            if len(matches) > 1 and size is not None:
-                # Twin releases of one scene can rewrite to identical titles;
-                # the webhook's size is what tells them apart.
-                by_size = [c for c in matches if c.size == size]
-                if len(by_size) == 1:
-                    matches = by_size
-            s.outcome.grab = ev
-            s.outcome.grabbed_guid = matches[0].guid if len(matches) == 1 else None
+            guid = self._correlate_guid(matches, size)
+            if download_id:
+                # Webhook resend / re-grab of the same download: update the
+                # existing record in place (keeping any import stamp it
+                # already earned) rather than appending a duplicate.
+                for rec in s.outcome.grabs:
+                    if rec.grab.download_id == download_id:
+                        rec.grab = ev
+                        rec.grabbed_guid = guid
+                        return
+            s.outcome.grabs.append(GrabRecord(grab=ev, grabbed_guid=guid))
             return
         self._unmatched_grabs.appendleft(UnmatchedGrab(ev))
 
@@ -194,15 +214,16 @@ class SessionStore:
     def record_import(self, download_id: str, movie_id: int,
                       file_count: int, dry_run: bool) -> None:
         ev = ImportEvent(time.time(), movie_id, file_count, dry_run)
-        for s in self._sessions:
-            grab = s.outcome.grab
-            if grab is not None and grab.download_id == download_id:
-                s.outcome.imported = ev
-                return
-        for u in self._unmatched_grabs:
-            if u.grab.download_id == download_id:
-                u.imported = ev
-                return
+        if download_id:  # an id-less import can't be correlated to anything
+            for s in self._sessions:
+                for rec in s.outcome.grabs:
+                    if rec.grab.download_id == download_id:
+                        rec.imported = ev
+                        return
+            for u in self._unmatched_grabs:
+                if u.grab.download_id == download_id:
+                    u.imported = ev
+                    return
         # An import for a grab we never saw (e.g. UI enabled mid-flight):
         # surface it rather than drop it.
         self._unmatched_grabs.appendleft(

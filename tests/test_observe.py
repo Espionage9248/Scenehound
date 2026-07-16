@@ -57,8 +57,7 @@ def test_snapshot_is_json_serializable_and_complete():
     assert s["candidates"][0]["strong_signals"] == ["date", "site"]
     assert s["candidates"][0]["detail"] == {"date": 40.0, "site": 35.0}
     assert s["outcome"]["status"] == "matched"
-    assert s["outcome"]["grab"] is None
-    assert s["outcome"]["grabbed_guid"] is None
+    assert s["outcome"]["grabs"] == []
     assert snap["unmatched_grabs"] == []
     assert "shk" not in text  # no config keys can appear: they are never stored
 
@@ -251,14 +250,16 @@ def test_record_grab_correlates_by_rewritten_title():
     store = _store_with_matched_session()
     store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
     s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["grab"]["download_id"] == "HASH1"
+    assert len(s["outcome"]["grabs"]) == 1
+    assert s["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH1"
     assert store.snapshot()["unmatched_grabs"] == []
 
 
 def test_record_grab_correlates_by_original_title():
     store = _store_with_matched_session()
     store.record_grab("TFG.26.07.07.Latex.Worship.Session.1080p", "HASH2")
-    assert store.snapshot()["sessions"][0]["outcome"]["grab"]["download_id"] == "HASH2"
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH2"
 
 
 def test_record_grab_picks_newest_matching_session():
@@ -269,8 +270,8 @@ def test_record_grab_picks_newest_matching_session():
         rec.commit()
     store.record_grab("SAME rewritten", "HASH3")
     snap = store.snapshot()["sessions"]
-    assert snap[0]["outcome"]["grab"] is not None     # newest
-    assert snap[1]["outcome"]["grab"] is None          # older untouched
+    assert len(snap[0]["outcome"]["grabs"]) == 1   # newest
+    assert snap[1]["outcome"]["grabs"] == []        # older untouched
 
 
 def test_record_grab_unmatched_is_kept_and_bounded():
@@ -286,7 +287,7 @@ def test_record_import_stamps_grabbed_session():
     store = _store_with_matched_session()
     store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
     store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
-    imp = store.snapshot()["sessions"][0]["outcome"]["imported"]
+    imp = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]["imported"]
     assert imp["movie_id"] == 7 and imp["dry_run"] is False
 
 
@@ -294,7 +295,8 @@ def test_record_import_dry_run_flagged():
     store = _store_with_matched_session()
     store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
     store.record_import("HASH1", movie_id=7, file_count=1, dry_run=True)
-    assert store.snapshot()["sessions"][0]["outcome"]["imported"]["dry_run"] is True
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grabs"][0]["imported"]["dry_run"] is True
 
 
 def test_record_import_stamps_unmatched_grab():
@@ -329,47 +331,51 @@ def _store_with_twin_titles(size_a=1000, size_b=2000):
 def test_record_grab_stamps_grabbed_guid_on_unique_title_match():
     store = _store_with_matched_session()
     store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
-    s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["grabbed_guid"] == "g1"
-    assert s["outcome"]["grab"]["size"] == 1000
+    g = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g["grabbed_guid"] == "g1"
+    assert g["grab"]["size"] == 1000
 
 
 def test_record_grab_without_size_still_stamps_unique_match():
     store = _store_with_matched_session()
     store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1")
-    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] == "g1"
+    g = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g["grabbed_guid"] == "g1"
 
 
 def test_record_grab_size_breaks_title_tie():
     store = _store_with_twin_titles()
     store.record_grab("SAME rewritten", "HASH1", 2000)
-    s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["grabbed_guid"] == "gB"
-    assert s["outcome"]["grab"]["download_id"] == "HASH1"
+    g = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g["grabbed_guid"] == "gB"
+    assert g["grab"]["download_id"] == "HASH1"
 
 
 def test_record_grab_tie_without_size_leaves_guid_none():
     store = _store_with_twin_titles()
     store.record_grab("SAME rewritten", "HASH1")
-    s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["grab"] is not None       # session-level grab still stamps
-    assert s["outcome"]["grabbed_guid"] is None   # UI degrades to old behavior
+    g = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g["grab"] is not None                  # record still created
+    assert g["grabbed_guid"] is None              # UI degrades to session level
 
 
 def test_record_grab_unhelpful_size_leaves_guid_none():
     # size matches neither twin
     store = _store_with_twin_titles()
     store.record_grab("SAME rewritten", "HASH1", 3000)
-    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] is None
+    assert store.snapshot()["sessions"][0]["outcome"]["grabs"][0]["grabbed_guid"] is None
     # size matches both twins
     store2 = _store_with_twin_titles(size_a=1000, size_b=1000)
     store2.record_grab("SAME rewritten", "HASH2", 1000)
-    s2 = store2.snapshot()["sessions"][0]
-    assert s2["outcome"]["grab"] is not None
-    assert s2["outcome"]["grabbed_guid"] is None
+    g2 = store2.snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g2["grab"] is not None
+    assert g2["grabbed_guid"] is None
 
 
-def test_record_grab_second_grab_restamps_guid():
+# --- multi-grab: a second grab APPENDS a second record (the whole feature) ---
+
+
+def _store_with_two_rewrites():
     store = SessionStore(max_sessions=10, max_candidates=200)
     rec = store.recorder("empornium", 75, "q")
     rec.scored([
@@ -377,15 +383,23 @@ def test_record_grab_second_grab_restamps_guid():
         (_cand("g2", "Release.Two", size=2000), SCENE, _ms(85), "Rewritten Two"),
     ])
     rec.commit()
+    return store
+
+
+def test_second_grab_appends_second_record():
+    store = _store_with_two_rewrites()
     store.record_grab("Rewritten One", "HASH1", 1000)
-    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] == "g1"
     store.record_grab("Rewritten Two", "HASH2", 2000)
-    s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["grab"]["download_id"] == "HASH2"
-    assert s["outcome"]["grabbed_guid"] == "g2"
+    grabs = store.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert len(grabs) == 2
+    assert grabs[0]["grab"]["download_id"] == "HASH1"
+    assert grabs[0]["grabbed_guid"] == "g1"
+    assert grabs[1]["grab"]["download_id"] == "HASH2"
+    assert grabs[1]["grabbed_guid"] == "g2"
+    assert store.snapshot()["unmatched_grabs"] == []
 
 
-def test_record_grab_ambiguous_second_grab_resets_guid():
+def test_ambiguous_second_grab_appends_record_with_none_guid():
     store = SessionStore(max_sessions=10, max_candidates=200)
     rec = store.recorder("empornium", 75, "q")
     rec.scored([
@@ -395,17 +409,66 @@ def test_record_grab_ambiguous_second_grab_resets_guid():
     ])
     rec.commit()
     store.record_grab("Rewritten One", "HASH1", 1000)
-    assert store.snapshot()["sessions"][0]["outcome"]["grabbed_guid"] == "g1"
     store.record_grab("SAME rewritten", "HASH2")  # ambiguous: no size, twin titles
+    grabs = store.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert len(grabs) == 2
+    assert grabs[0]["grabbed_guid"] == "g1"       # first record untouched
+    assert grabs[1]["grab"]["download_id"] == "HASH2"
+    assert grabs[1]["grabbed_guid"] is None       # its own ambiguity, its own None
+
+
+def test_two_grabs_import_independently():
+    store = _store_with_two_rewrites()
+    store.record_grab("Rewritten One", "HASH1", 1000)
+    store.record_grab("Rewritten Two", "HASH2", 2000)
+    store.record_import("HASH2", movie_id=8, file_count=2, dry_run=False)
+    grabs = store.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert grabs[0]["imported"] is None            # first grab: not yet imported
+    assert grabs[1]["imported"]["movie_id"] == 8   # second grab: imported
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=True)
+    grabs = store.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert grabs[0]["imported"]["dry_run"] is True
+    assert grabs[1]["imported"]["dry_run"] is False
+    assert store.snapshot()["unmatched_grabs"] == []
+
+
+def test_regrab_same_download_id_updates_in_place():
+    # Webhook resend / re-grab: same download_id must NOT duplicate the record,
+    # and must keep the import stamp it already earned.
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    grabs = store.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert len(grabs) == 1
+    assert grabs[0]["grabbed_guid"] == "g1"
+    assert grabs[0]["imported"]["movie_id"] == 7   # import stamp survives
+
+
+def test_empty_download_id_grabs_always_append():
+    # A grab without a download_id can't be deduped; two of them = two records.
+    store = _store_with_two_rewrites()
+    store.record_grab("Rewritten One", "")
+    store.record_grab("Rewritten Two", "")
+    grabs = store.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert len(grabs) == 2
+
+
+def test_import_with_empty_download_id_never_matches_a_grab():
+    # An id-less import must not bind to an id-less grab record; it surfaces
+    # as unmatched instead of stamping the wrong record.
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "")
+    store.record_import("", movie_id=5, file_count=1, dry_run=False)
     s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["grab"]["download_id"] == "HASH2"
-    assert s["outcome"]["grabbed_guid"] is None   # restamped WITH the grab, never stale
+    assert s["outcome"]["grabs"][0]["imported"] is None
+    assert store.snapshot()["unmatched_grabs"][0]["imported"]["movie_id"] == 5
 
 
 def test_record_import_leaves_grabbed_guid_unchanged():
     store = _store_with_matched_session()
     store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
     store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
-    s = store.snapshot()["sessions"][0]
-    assert s["outcome"]["imported"]["movie_id"] == 7
-    assert s["outcome"]["grabbed_guid"] == "g1"
+    g = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g["imported"]["movie_id"] == 7
+    assert g["grabbed_guid"] == "g1"

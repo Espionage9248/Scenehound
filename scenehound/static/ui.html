@@ -150,22 +150,33 @@ const fmtTime = t => t ? new Date(t * 1000).toLocaleString() : "";
 const fmtSize = n => n == null ? "" :
   n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : (n / 1e6).toFixed(0) + " MB";
 
-function grabBadge(o) {
-  if (o.imported) return o.imported.dry_run
+function grabBadge(rec) {
+  // rec is ONE grab record from o.grabs: {grab, grabbed_guid, imported}
+  if (rec.imported) return rec.imported.dry_run
     ? ['b-dryrun', 'Would import (dry-run)'] : ['b-imported', 'Imported'];
-  if (o.grab) return ['b-grabbed', 'Grabbed'];
-  return null;
+  return ['b-grabbed', 'Grabbed'];
 }
 
-function badge(s) {
+function grabPills(o) {
+  // Session-summary pills: one counted pill per state present, strongest
+  // first. ×N suffix omitted at N==1 so single-grab sessions look as before.
+  const counts = { 'b-imported': 0, 'b-dryrun': 0, 'b-grabbed': 0 };
+  const labels = { 'b-imported': 'Imported', 'b-dryrun': 'Would import (dry-run)',
+                   'b-grabbed': 'Grabbed' };
+  for (const rec of (o.grabs || [])) counts[grabBadge(rec)[0]]++;
+  return Object.keys(counts).filter(k => counts[k]).map(k =>
+    [k, labels[k] + (counts[k] > 1 ? ` ×${counts[k]}` : '')]);
+}
+
+function badges(s) {
   const o = s.outcome;
-  const g = grabBadge(o);
-  if (g) return g;
-  if (s.kind === 'rss') return ['b-rss', `RSS: ${o.rewritten} rewritten of ${o.items_total}`];
-  if (s.kind === 'passthrough') return ['b-pass', `Passthrough (${o.matched_count})`];
-  if (o.status === 'error') return ['b-error', 'Error'];
-  if (o.status === 'matched') return ['b-matched', `Matched (${o.matched_count})`];
-  return ['b-empty', 'No matches'];
+  const g = grabPills(o);
+  if (g.length) return g;
+  if (s.kind === 'rss') return [['b-rss', `RSS: ${o.rewritten} rewritten of ${o.items_total}`]];
+  if (s.kind === 'passthrough') return [['b-pass', `Passthrough (${o.matched_count})`]];
+  if (o.status === 'error') return [['b-error', 'Error']];
+  if (o.status === 'matched') return [['b-matched', `Matched (${o.matched_count})`]];
+  return [['b-empty', 'No matches']];
 }
 
 function humanAsk(s) {
@@ -206,10 +217,12 @@ function candidates(s) {
   let h = `<h3>Candidates (${s.candidates.length}${
     s.dropped_candidates ? ` shown, +${s.dropped_candidates} more dropped` : ""})</h3>`;
   h += `<table><tr><th>Release title</th><th>Size</th><th>Seeders</th><th>Confidence</th><th></th></tr>`;
+  const recByGuid = {};
+  for (const rec of (s.outcome.grabs || []))
+    if (rec.grabbed_guid) recByGuid[rec.grabbed_guid] = rec;
   for (const c of s.candidates) {
-    // grabbed_guid may be absent on sessions recorded before this feature.
-    const gb = s.outcome.grabbed_guid && c.guid === s.outcome.grabbed_guid
-      ? grabBadge(s.outcome) : null;
+    // Each grabbed row badges with ITS OWN grab's state.
+    const gb = recByGuid[c.guid] ? grabBadge(recByGuid[c.guid]) : null;
     h += `<tr class="${c.matched ? "conf-hit" : ""}">` +
       `<td>${esc(c.title)}${gb ? ` <span class="badge ${gb[0]}">${esc(gb[1])}</span>` : ""}${c.rewritten_title
           ? `<div class="muted">→ returned as: ${esc(c.rewritten_title)}</div>` : ""}` +
@@ -234,18 +247,18 @@ function outcome(s) {
     h += `<li>✓ Returned ${o.matched_count} matched release(s) to Whisparr.</li>`;
   else
     h += `<li>✗ <b>Failure</b>: no candidate matched a wanted scene; nothing returned.</li>`;
-  if (o.grab) {
-    const gc = o.grabbed_guid
-      ? (s.candidates || []).find(c => c.guid === o.grabbed_guid) : null;
-    h += `<li>✓ Whisparr grabbed <code>${esc(o.grab.release_title)}</code>` +
-      (gc && gc.title !== o.grab.release_title
+  for (const rec of (o.grabs || [])) {
+    const gc = rec.grabbed_guid
+      ? (s.candidates || []).find(c => c.guid === rec.grabbed_guid) : null;
+    h += `<li>✓ Whisparr grabbed <code>${esc(rec.grab.release_title)}</code>` +
+      (gc && gc.title !== rec.grab.release_title
         ? ` — candidate <code>${esc(gc.title)}</code>` : "") +
-      ` at ${fmtTime(o.grab.at)}.</li>`;
+      ` at ${fmtTime(rec.grab.at)}.</li>`;
+    if (rec.imported)
+      h += rec.imported.dry_run
+        ? `<li>✓ Scenehound <b>would have imported</b> ${rec.imported.file_count} file(s) (dry-run) at ${fmtTime(rec.imported.at)}.</li>`
+        : `<li>✓ Scenehound auto-imported ${rec.imported.file_count} file(s) at ${fmtTime(rec.imported.at)}.</li>`;
   }
-  if (o.imported)
-    h += o.imported.dry_run
-      ? `<li>✓ Scenehound <b>would have imported</b> ${o.imported.file_count} file(s) (dry-run) at ${fmtTime(o.imported.at)}.</li>`
-      : `<li>✓ Scenehound auto-imported ${o.imported.file_count} file(s) at ${fmtTime(o.imported.at)}.</li>`;
   return h + `</ul>`;
 }
 
@@ -263,12 +276,13 @@ function render(data) {
     (u.imported ? ` <span class="badge ${u.imported.dry_run ? "b-dryrun" : "b-imported"}">${u.imported.dry_run ? "would import" : "imported"}</span>` : "") +
     `</summary></div>`).join("");
   $("sessions").innerHTML = (data.sessions || []).map(s => {
-    const [cls, label] = badge(s);
+    const pills = badges(s).map(([cls, label]) =>
+      `<span class="badge ${cls}">${esc(label)}</span>`).join(" ");
     return `<details class="card" data-sid="${s.session_id}" ${open.has(String(s.session_id)) ? "open" : ""}>` +
       `<summary><span class="when">${fmtTime(s.started_at)}</span>` +
       `<span class="slug">${esc(s.slug)}</span>` +
       `<span class="ask">${esc(humanAsk(s))}</span>` +
-      `<span class="badge ${cls}">${esc(label)}</span></summary>` +
+      `${pills}</summary>` +
       `<div class="body">${queryChain(s)}${candidates(s)}${outcome(s)}</div></details>`;
   }).join("") || `<p class="muted">No searches recorded yet. Trigger a search in Whisparr and it will appear here.</p>`;
 }
