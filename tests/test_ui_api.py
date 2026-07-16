@@ -71,5 +71,6 @@ def test_sessions_empty_when_store_none():
 def test_ui_page_has_app_markers():
     r = TestClient(_app()).get("/ui")
     for marker in ('id="sessions"', 'id="keyform"', 'id="indexinfo"',
-                   "scenehound_apikey", "/ui/api/sessions", "grabbed_guid"):
+                   "scenehound_apikey", "/ui/api/sessions", "grabbed_guid",
+                   "grabPills", "o.grabs"):
         assert marker in r.text, marker
