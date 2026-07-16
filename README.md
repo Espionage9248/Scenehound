@@ -118,7 +118,10 @@ Torznab endpoints) that makes each search legible:
   on any date mismatch. The candidate Whisparr actually grabbed is badged in
   place (**Grabbed**, upgrading to **Imported**); when two releases carry
   identical rewritten titles, the grab is told apart by size, and if that's
-  still ambiguous no row is badged rather than guessing.
+  still ambiguous no row is badged rather than guessing. When one session
+  produces several grabs (an RSS sweep taking multiple candidates), each grab
+  keeps its own badge and import stamp, and the session card shows counted
+  pills such as **Imported ×2**.
 - **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
   Whisparr grabs a result and **Imported** when the import-completer lands it.
 
