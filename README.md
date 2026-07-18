@@ -115,7 +115,10 @@ Torznab endpoints) that makes each search legible:
   vs threshold). A release date up to `SCENEHOUND_DATE_SKEW_DAYS` (default 3)
   off the scene's date is forgiven when at least two other signals are
   strong; set it to 1 to disable forgiveness and restore the old hard veto
-  on any date mismatch. The candidate Whisparr actually grabbed is badged in
+  on any date mismatch. The same two-strong bar applies when a date matches
+  only via a misreading of an ambiguous stamp (`26.07.18` read backwards),
+  and numeric titles like *Case No. 2658794* must match on the number
+  itself — the boilerplate words around it can't fabricate a title signal. The candidate Whisparr actually grabbed is badged in
   place (**Grabbed**, upgrading to **Imported**); when two releases carry
   identical rewritten titles, the grab is told apart by size, and if that's
   still ambiguous no row is badged rather than guessing. When one session
