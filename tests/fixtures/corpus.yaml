@@ -188,3 +188,23 @@
     title: "Case No. 8002506 Bending the Right Way"
     performers: ["Sydney Paige"]
   expect: no_match
+
+# --- 2026-07-19 production false grab (RSS): numeric title + misread-date rescue ---
+# "26.07.18" is 2026-07-18 (yy.mm.dd); its dd.mm.yy misreading 2018-07-26 sat 1 day
+# from the wanted 2018-07-25 scene and forgave the date veto, while the scene title
+# "Case No. 2658794" lost its number to digit-stripping and strong-matched the
+# boilerplate {case, no} in "Case No. 8004900" (35+40=75, grabbed live pre-fix).
+# Killed twice over: digit-aware title identity demotes the title, and a lone
+# strong signal can no longer forgive a contradicting primary date via a misreading.
+- release: "ShopLyfter - 26.07.18 - Case No. 8004900 - Sakura Lin, the Rich Girl vs Two Cocks - 1080p {Se7enSeas}"
+  scene: &case_2658794
+    site: "Shoplyfter"
+    date: 2018-07-25
+    title: "Case No. 2658794"
+  expect: no_match
+
+# Recall twin: the RIGHT release for that scene (correct case number, yy.mm.dd date
+# on the scene's own day) must keep matching with the digit-aware title identity.
+- release: "ShopLyfter - 18.07.25 - Case No. 2658794 - 1080p {Se7enSeas}"
+  scene: *case_2658794
+  expect: match

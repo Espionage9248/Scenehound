@@ -1,5 +1,6 @@
 from scenehound.normalize import (
     content_tokens,
+    identity_tokens,
     squash,
     tokenize,
     xxx_site_variant,
@@ -23,6 +24,13 @@ def test_content_tokens_drops_junk_and_bare_numbers():
         "site", "name", "great", "scene", "grp",
     ]
     assert content_tokens("2026 07 07") == []
+
+
+def test_identity_tokens_keep_bare_numbers_drop_junk():
+    # Unlike content_tokens, bare numbers survive: a case/episode number is
+    # often the ONLY thing distinguishing sibling scenes of one studio.
+    assert identity_tokens("Case No. 2658794 XXX 1080p") == ["case", "no", "2658794"]
+    assert identity_tokens("Great.Scene.WEB-DL.x265-GRP") == ["great", "scene", "grp"]
 
 
 def test_xxx_site_variant_strips_suffix_in_all_spellings():

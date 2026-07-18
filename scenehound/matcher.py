@@ -21,6 +21,10 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   strong signal by mere containment, and a distinctive title never pairs with
   date alone to clear the threshold (a near-exact title with no site/performer
   still contributes up to TITLE_MAX medium points but is not a strong signal).
+  Near-exactness is judged on identity tokens (bare numbers KEPT): for titles
+  like "Case No. 2658794" the number is the only distinguishing part, and
+  digit-stripping would let the boilerplate {case, no} strong-match every
+  release of the studio (2026-07-19 ShopLyfter false grab).
 - A parsed date that contradicts the scene's date is a hard veto, EXCEPT when
   the skew is within date_skew_days (default 3) and the match clears the
   two-strong-signal rule without the date — uploaders sometimes stamp
@@ -30,10 +34,15 @@ Presence detection is boundary-aware to prevent spurious strong signals:
 - Only a PRIMARY-reading date — the dominant convention of its format
   (yy.mm.dd for two-digit triples, yyyy.mm.dd, dd.mm.yyyy) — can be a strong
   signal. A date matched only via an alternate reading of an ambiguous
-  ordering forgives the date veto but is never strong and contributes no
-  points (detail["date_secondary_reading"] traces it): a [26-07-14] release
+  ordering is never strong and contributes no points
+  (detail["date_secondary_reading"] traces it): a [26-07-14] release
   must not strongly match a 2014-07-26 scene by cherry-picking the dd.mm.yy
-  reading (2026-07-15 production false grab).
+  reading (2026-07-15 production false grab). Such a reading forgives the
+  date veto only under the same bar as skew forgiveness — the match must
+  clear the two-strong-signal rule without the date. A single-signal
+  candidate rescued only by a misreading of a contradicting stamp is vetoed
+  (2026-07-19 ShopLyfter false grab: primary 2026-07-18, eight years off,
+  laundered through its dd.mm.yy misreading landing 1 day from the scene).
 - Foreign-title veto: when the strong set is title-less (any pair or triple of
   site/date/performer, with no title match), the scene title is distinctive,
   and the candidate carries >= 3 DISTINCT content tokens beyond the scene's
@@ -54,7 +63,7 @@ from rapidfuzz import fuzz
 
 from scenehound.dates import extract_dates
 from scenehound.models import SceneFingerprint
-from scenehound.normalize import content_tokens, squash, tokenize
+from scenehound.normalize import content_tokens, identity_tokens, squash, tokenize
 
 STRONG_DATE = 40
 STRONG_SITE = 35
@@ -176,9 +185,14 @@ def score(
     cand_ctoks = content_tokens(title)
     title_ratio: float | None = None
     if scene_ctoks and cand_ctoks:
-        cand_ctok_set = set(cand_ctoks)
+        # Near-exactness includes bare numbers (identity_tokens): a case or
+        # episode number is often the only part separating sibling scenes, so
+        # "Case No. 2658794" must not strong-match "Case No. 8004900" on the
+        # boilerplate words alone. Distinctiveness stays on content tokens —
+        # digits alone must not promote a generic title to strong-eligible.
+        cand_itok_set = set(identity_tokens(title))
         near_exact = len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS and all(
-            t in cand_ctok_set for t in scene_ctoks
+            t in cand_itok_set for t in identity_tokens(scene.title)
         )
         # Title is strong ONLY alongside a site or performer strong signal (the
         # site/performer blocks run before this one, so `strong` is populated).
@@ -197,9 +211,17 @@ def score(
     # stamp rip/upload dates a few days off the studio release date) AND the
     # match clears the two-strong-signal rule without the date. Otherwise it
     # stays a hard contradiction: on daily-release sites the date is often
-    # the only thing separating sibling scenes.
-    if date_off is not None and (date_off > date_skew_days or len(strong) < 2):
-        return MatchScore(0, (), "date-mismatch", {"date": 0.0})
+    # the only thing separating sibling scenes. A secondary-reading rescue is
+    # held to the same two-strong bar: the primary reading contradicts, and a
+    # lone signal must not launder that through a misreading that happens to
+    # land near the scene date (2026-07-19 ShopLyfter grab).
+    if (date_off is not None and (date_off > date_skew_days or len(strong) < 2)) or (
+        date_secondary and len(strong) < 2
+    ):
+        veto_detail = {"date": 0.0}
+        if date_secondary:
+            veto_detail["date_secondary_reading"] = 1.0
+        return MatchScore(0, (), "date-mismatch", veto_detail)
 
     # --- foreign-title veto ---
     # A title-less strong set (any pair or triple of site/date/performer, no

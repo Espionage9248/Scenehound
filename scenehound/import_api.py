@@ -20,7 +20,11 @@ async def import_webhook(request: Request) -> Response:
     except Exception:
         payload = {}
     event = str(payload.get("eventType", ""))
-    log.debug("webhook event=%s payload=%s", event, payload)
+    # INFO on the event itself: "webhook never fired" vs "correlation failed"
+    # must be distinguishable from default-level logs (2026-07-19 unmarked grab).
+    log.info("webhook event=%s download_id=%s", event,
+             payload.get("downloadId") or "?")
+    log.debug("webhook payload=%s", payload)
     # Grab events also feed the web UI's outcome ladder. record_grab is
     # exception-shielded in the store, and this runs BEFORE (and independent
     # of) completer.notify() so a UI problem can never block a sweep.

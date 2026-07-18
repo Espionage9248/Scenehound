@@ -325,18 +325,18 @@ def test_incident_secondary_reading_date_is_not_strong():
     # Production false grab 2026-07-15: [26-07-14] is 2026-07-14 in the
     # uploader's yy-mm-dd; the dd-mm-yy alternate (2014-07-26) sat 1 day from
     # the scene and fabricated a strong date next to the site hit (40+35=75).
-    # Demoted: site alone stays capped under threshold.
+    # Since the 2026-07-19 ShopLyfter grab, a single-signal candidate rescued
+    # only by a misreading is a hard veto, not merely capped: the primary
+    # reading contradicts and site alone can't forgive it.
     s = score(INCIDENT_SCENE, INCIDENT_RELEASE)
-    assert s.veto is None                      # alternate reading forgives the veto
-    assert "date" not in s.strong_signals
-    assert s.strong_signals == ("site",)
-    assert s.confidence < 75
+    assert s.veto == "date-mismatch"
+    assert s.confidence == 0
 
 
 def test_secondary_reading_traced_not_scored():
     s = score(INCIDENT_SCENE, INCIDENT_RELEASE)
     assert s.detail["date_secondary_reading"] == 1.0
-    assert "date" not in s.detail  # zero points from the date
+    assert s.detail["date"] == 0.0  # zero points from the date
 
 
 def test_secondary_reading_forgives_veto_for_ddmmyy_uploaders():
@@ -443,3 +443,58 @@ def test_site_performer_corroborating_title_still_matches():
     assert s.veto is None
     assert {"site", "performer"} <= set(s.strong_signals)
     assert s.confidence >= 75
+
+
+# --- 2026-07-19 production false grab: numeric titles + misread-date rescue ---
+# ShopLyfter stamps yy.mm.dd; "26.07.18" is 2026-07-18. Its dd.mm.yy misreading
+# (2018-07-26) sat 1 day from a wanted 2018-07-25 scene and forgave the veto,
+# while the scene title "Case No. 2658794" lost its number to content_tokens and
+# strong-matched "Case No. 8004900" on the boilerplate {case, no} alone (35+40=75).
+
+SHOPLYFTER_SCENE = SceneFingerprint(
+    scene_id=50,
+    site="Shoplyfter",
+    site_aliases=(),
+    date=date(2018, 7, 25),
+    title="Case No. 2658794",
+    performers=(),
+)
+SHOPLYFTER_RELEASE = (
+    "ShopLyfter - 26.07.18 - Case No. 8004900 - "
+    "Sakura Lin, the Rich Girl vs Two Cocks - 1080p {Se7enSeas}"
+)
+
+
+def test_numeric_title_with_wrong_number_is_not_strong():
+    # The case number is the only identifying part of the title; boilerplate
+    # {case, no} containment must not fabricate a strong title signal.
+    s = score(SHOPLYFTER_SCENE, "ShopLyfter - Case No. 8004900 - 1080p")
+    assert "title" not in s.strong_signals
+    assert s.confidence < 75
+
+
+def test_numeric_title_with_matching_number_still_strong():
+    s = score(SHOPLYFTER_SCENE, "ShopLyfter - Case No. 2658794 - 1080p")
+    assert "title" in s.strong_signals
+    assert s.confidence >= 75
+
+
+def test_incident_shoplyfter_release_vetoed():
+    # Full incident release: with the boilerplate title demoted, only the site
+    # signal stands, and a lone strong signal cannot forgive the contradicting
+    # primary date (2026-07-18) via its dd.mm.yy misreading.
+    s = score(SHOPLYFTER_SCENE, SHOPLYFTER_RELEASE)
+    assert s.veto == "date-mismatch"
+    assert s.confidence == 0
+
+
+def test_secondary_rescue_with_two_strong_signals_still_forgiven():
+    # The two-strong-signal rule already governs skew forgiveness; secondary-
+    # reading rescue uses the same bar. Site+performer keeps the honest
+    # dd.mm.yy-uploader shape working even without a title in the release.
+    scene = SceneFingerprint(31, "Some Site", (), date(2026, 7, 14),
+                             "Latex Worship Session", ("Jane Doe",))
+    s = score(scene, "[SomeSite] Jane Doe - Solo Clip [14-07-26]")
+    assert s.veto is None
+    assert s.detail["date_secondary_reading"] == 1.0
+    assert s.confidence < 75  # capped: no title corroboration, date not strong
