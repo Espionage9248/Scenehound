@@ -63,3 +63,12 @@ def tokenize(s: str) -> list[str]:
 def content_tokens(s: str) -> list[str]:
     """Tokens that plausibly identify content: junk and bare numbers removed."""
     return [t for t in tokenize(s) if t not in JUNK_TOKENS and not t.isdigit()]
+
+
+def identity_tokens(s: str) -> list[str]:
+    """Like content_tokens but bare numbers survive. For titles such as
+    "Case No. 2658794" the number is the ONLY part distinguishing sibling
+    scenes of one studio; digit-stripping reduces every such title to the same
+    boilerplate (2026-07-19 ShopLyfter false grab). Junk (resolutions, codecs)
+    is still removed — those numbers never identify content."""
+    return [t for t in tokenize(s) if t not in JUNK_TOKENS]

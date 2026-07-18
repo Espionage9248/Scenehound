@@ -197,6 +197,8 @@ class SessionStore:
             if not matches:
                 continue
             guid = self._correlate_guid(matches, size)
+            log.info("grab correlated session=%d kind=%s slug=%s title=%r",
+                     s.session_id, s.kind, s.slug, release_title)
             if download_id:
                 # Webhook resend / re-grab of the same download: update the
                 # existing record in place (keeping any import stamp it
@@ -208,6 +210,9 @@ class SessionStore:
                         return
             s.outcome.grabs.append(GrabRecord(grab=ev, grabbed_guid=guid))
             return
+        log.warning("grab uncorrelated: no stored session lists title=%r "
+                    "(download_id=%s) — surfacing in unmatched grabs",
+                    release_title, download_id or "?")
         self._unmatched_grabs.appendleft(UnmatchedGrab(ev))
 
     @_shielded
