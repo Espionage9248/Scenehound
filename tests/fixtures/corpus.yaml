@@ -208,3 +208,24 @@
 - release: "ShopLyfter - 18.07.25 - Case No. 2658794 - 1080p {Se7enSeas}"
   scene: *case_2658794
   expect: match
+
+# --- 2026-08-06 production false grab (RSS): performer name inside the scene title ---
+# A VR release from an unrelated studio agreed on performer (River Lynn) and date
+# (07-21, ±1 of the wanted 07-20) — 35+40=75, exactly threshold. The foreign-title
+# veto should have killed it (5 residual tokens: fuckpassvr, ponytail, leverage,
+# oculus, 8k) but the scene title ENDS in the performer's name, so the shared name
+# alone lifted title similarity to 48.2 over the 40 gate and defused the veto.
+# Killed by judging corroboration on de-named tokens.
+- release: "FuckPassVR - Ponytail Leverage - River Lynn (2026.07.21) (Oculus 8K, UHD)"
+  scene: &river_lynn
+    site: "PervTherapy"
+    aliases: ["PervTherapy XXX"]
+    date: 2026-07-20
+    title: "He Discovered Our PervTherapy Secret: Three Cocks for River Lynn"
+    performers: ["River Lynn"]
+  expect: no_match
+
+# Recall twin: the RIGHT release for that scene still matches (site + date + title).
+- release: "PervTherapy.26.07.20.He.Discovered.Our.PervTherapy.Secret.Three.Cocks.for.River.Lynn.XXX.2160p"
+  scene: *river_lynn
+  expect: match

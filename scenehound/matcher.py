@@ -47,7 +47,17 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   site/date/performer, with no title match), the scene title is distinctive,
   and the candidate carries >= 3 DISTINCT content tokens beyond the scene's
   site/title/performers at title similarity below _FOREIGN_TITLE_RATIO (40),
-  the candidate names a different scene and is vetoed. A title-less set confirms
+  the candidate names a different scene and is vetoed. That similarity is
+  measured on DE-NAMED tokens (site/alias/performer names stripped from both
+  sides): a name shared with the candidate is already its own strong signal, and
+  counting it again as title corroboration scores one fact twice. Scene titles
+  routinely end in the performer ("...Three Cocks for River Lynn"), and that
+  shared name alone lifted the ratio over the gate, disarming this veto for a
+  release from an unrelated studio (2026-08-06 FuckPassVR false grab). The ratio
+  also only counts at all when the de-named titles share at least one word:
+  rapidfuzz rates unrelated word sets in the high 30s-50s on character overlap
+  alone, so the gate is barely above its own noise floor and needs a real shared
+  word underneath it. A title-less set confirms
   only colliding attributes — a performer confirms a person, not the scene — so
   a {date, performer} grab of the right person on the right day with a foreign
   title is a false positive (2026-07-15 GloryholeSecrets grab). A strong set
@@ -239,14 +249,39 @@ def score(
         len(strong) >= 2
         and "title" not in strong
         and len(scene_ctoks) >= _MIN_TITLE_STRONG_TOKENS
-        and (title_ratio is None or title_ratio < _FOREIGN_TITLE_RATIO)
     ):
-        known = set(scene_ctoks)
+        name_toks: set[str] = set()
         for name in (scene.site, *scene.site_aliases, *scene.performers):
-            known.update(tokenize(name))
-            known.add(squash(name))  # glued forms: "[FamilyTherapy]" is not foreign
-        if sum(1 for t in set(cand_ctoks) if t not in known) >= _MIN_FOREIGN_RESIDUAL:
-            return MatchScore(0, tuple(strong), "foreign-title", detail)
+            name_toks.update(tokenize(name))
+            name_toks.add(squash(name))  # glued forms: "[FamilyTherapy]" is not foreign
+        # Corroboration is measured on the DISTINCTIVE tokens of both titles:
+        # words that merely repeat the scene's own site or performer names are
+        # already counted as their own strong signal, so letting them also raise
+        # title similarity scores one fact twice. Scene titles routinely end in
+        # the performer ("...Three Cocks for River Lynn"), and that shared name
+        # alone carried the ratio over the gate, disarming this veto for a
+        # release from an entirely different studio (2026-08-06 FuckPassVR false
+        # grab: {date, performer} honest, ratio 48.2, 5 foreign residual tokens).
+        scene_rest = [t for t in scene_ctoks if t not in name_toks]
+        cand_rest = [t for t in cand_ctoks if t not in name_toks]
+        # The ratio may only defuse the veto when the two titles share at least
+        # one distinctive word. rapidfuzz rates unrelated word sets in the high
+        # 30s-50s on character overlap alone ("Late Night Bedroom Secrets" vs
+        # "Tight White Leather Corset" = 50.0, not one word in common), so
+        # _FOREIGN_TITLE_RATIO sits barely above that noise floor and a slightly
+        # longer foreign title clears it with nothing real in common. One shared
+        # word is the cheapest evidence the ratio measures paraphrase rather
+        # than coincidence; without it there is nothing to be forgiving about.
+        distinct_ratio = (
+            fuzz.token_set_ratio(" ".join(scene_rest), " ".join(cand_rest))
+            if set(scene_rest) & set(cand_rest)
+            else 0.0  # nothing corroborates; the residual count decides
+        )
+        if distinct_ratio < _FOREIGN_TITLE_RATIO:
+            known = set(scene_ctoks) | name_toks
+            if sum(1 for t in set(cand_ctoks) if t not in known) >= _MIN_FOREIGN_RESIDUAL:
+                detail["foreign_title_ratio"] = distinct_ratio  # trace, not points
+                return MatchScore(0, tuple(strong), "foreign-title", detail)
 
     total = sum(detail.values())
     if len(strong) < 2:
