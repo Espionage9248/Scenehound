@@ -521,11 +521,24 @@ def test_truncated_title_is_not_a_sibling():
 
 
 def test_misspelled_title_is_not_a_sibling():
-    # Coverage drops to 50% on a tracker typo, but the words still read as the
-    # same title — the ratio escape hatch keeps it a match.
+    # Coverage drops to 50% on a tracker typo too, but every missing word is
+    # spelled right there in the candidate ("shady" vs "shadey" = 90.9).
     s = score(BRALESS_SCENE, "[BralessForever.com] Emma G & Rocky - Shadey Beach - 4k")
     assert s.veto is None
     assert s.confidence >= 75
+
+
+def test_sibling_arm_ignores_the_whole_title_ratio():
+    # The rewording escape hatch MUST be judged word-to-word. The incident's
+    # whole-title ratio is 76.2 — "shady" and "days" share three letters — so any
+    # whole-string bar low enough to admit real rewordings also admits this. The
+    # word-to-word question ("shady" vs "days" = 44.4) does not. Pinned because
+    # the junk token "com" was accidentally holding that ratio down to 64: the
+    # arm looked correct only until normalize stopped emitting a junk token.
+    s = score(BRALESS_SCENE, "[BralessForever.com] Emma G & Rocky - Beach Days - 4k")
+    assert s.veto == "foreign-title"
+    assert s.detail["foreign_title_ratio"] > 70   # would have defused a whole-string gate
+    assert s.detail["title_coverage"] == 0.5
 
 
 def test_reworded_title_above_coverage_bar_still_matches():

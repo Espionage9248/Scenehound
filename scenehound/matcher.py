@@ -71,9 +71,12 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   the studio's NEXT scene rather than this one ("Beach Days" vs "Shady Beach",
   same studio, same couple, no date: 2026-08-06 BralessForever grab, 2 residual
   tokens so the absence arm could never fire). Requires actual overlap — at zero
-  overlap the filler forgiveness above governs — and yields to
-  _SIBLING_TITLE_RATIO so a tracker typo ("Shadey Beach", 50% coverage but ~86
-  similarity) still matches.
+  overlap the filler forgiveness above governs — and yields when every missing
+  word is merely SPELLED differently by the candidate. That last test is
+  word-to-word (_SIBLING_TOKEN_RATIO), never title-to-title: "shady beach" vs
+  "beach days" rates 76.2 on shared letters alone, whereas the real question
+  ("shady" vs the substituted "days" = 44.4) separates cleanly from a tracker
+  typo ("shady" vs "shadey" = 90.9).
 """
 from __future__ import annotations
 
@@ -103,10 +106,11 @@ _MAX_SIBLING_COVERAGE = 0.5   # fraction of the scene title's distinctive words 
 #                               carries. At or below half, with a substituted word of its own,
 #                               it names the studio's NEXT scene, not this one (2026-08-06
 #                               BralessForever grab: "Beach Days" vs "Shady Beach", 50%).
-_SIBLING_TITLE_RATIO = 70     # …unless the words still READ as the same title despite the low
-#                               coverage — a tracker typo ("Shadey Beach") rates ~86. Set well
-#                               clear of the 64 the incident scored and the 76 of the lowest
-#                               in-corpus legitimate reword.
+_SIBLING_TOKEN_RATIO = 75     # …unless every missing word is merely SPELLED differently by the
+#                               candidate. Judged word-to-word, never title-to-title: "shady" vs
+#                               the substituted "days" rates 44.4, a real typo ("shadey") 90.9.
+#                               The whole-title ratio cannot answer this — "shady beach" vs
+#                               "beach days" rates 76.2 on shared letters alone.
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
 _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a strong signal
 _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram;
@@ -298,6 +302,15 @@ def score(
             else 0.0  # nothing corroborates; the residual count decides
         )
         coverage = len(shared) / len(set(scene_rest)) if scene_rest else 0.0
+        # A word missing from the candidate is forgiven when the candidate simply
+        # SPELLS it differently — asked word-to-word, because the whole-title
+        # ratio cannot answer it: "shady beach" vs "beach days" rates 76.2 purely
+        # on shared letters, while the real question ("shady" vs "days" = 44.4)
+        # separates cleanly from a tracker typo ("shady" vs "shadey" = 90.9).
+        reworded = all(
+            any(fuzz.ratio(miss, own) >= _SIBLING_TOKEN_RATIO for own in residual)
+            for miss in set(scene_rest) - shared
+        )
         # Two shapes of "different scene", separated by whether the candidate
         # engages with the scene's title at all:
         #
@@ -313,17 +326,16 @@ def score(
         #     shared word is generic; the differing one is the whole identity.
         #     The `shared` guard is load-bearing: without it a zero-overlap
         #     coverage of 0.0 satisfies the bar and arm (b) swallows the filler
-        #     forgiveness arm (a) exists to grant.
-        #     _SIBLING_TITLE_RATIO is the escape hatch for a title that reads
-        #     the same despite low coverage — a tracker typo ("Shadey Beach")
-        #     drops coverage to 50% but still rates ~86.
+        #     forgiveness arm (a) exists to grant. `reworded` is the escape
+        #     hatch: a tracker typo ("Shadey Beach") also drops coverage to 50%,
+        #     but every missing word is spelled right there in the candidate.
         if (
             (distinct_ratio < _FOREIGN_TITLE_RATIO
              and len(residual) >= _MIN_FOREIGN_RESIDUAL)
             or (shared
                 and residual
                 and coverage <= _MAX_SIBLING_COVERAGE
-                and distinct_ratio < _SIBLING_TITLE_RATIO)
+                and not reworded)
         ):
             detail["foreign_title_ratio"] = distinct_ratio  # trace, not points
             detail["title_coverage"] = coverage             # trace, not points

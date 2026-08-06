@@ -26,6 +26,26 @@ def test_content_tokens_drops_junk_and_bare_numbers():
     assert content_tokens("2026 07 07") == []
 
 
+def test_domain_suffix_is_junk():
+    # Trackers brand the studio with its domain ("[BralessForever.com]"); the
+    # suffix identifies nothing and otherwise counts as one of the candidate's
+    # "own" words in the foreign-title veto's residual.
+    assert content_tokens("[BralessForever.com] Emma G - Beach Days") == [
+        "bralessforever", "emma", "g", "beach", "days",
+    ]
+    assert identity_tokens("Site.com.2026.Scene") == ["site", "2026", "scene"]
+    # Only the standalone token: a word that merely contains "com" survives.
+    assert content_tokens("Comedy Compilation Welcome") == [
+        "comedy", "compilation", "welcome",
+    ]
+
+
+def test_site_name_ngrams_survive_domain_branding():
+    # tokenize (not content_tokens) feeds the matcher's site n-grams, so junking
+    # "com" must not disturb site presence detection.
+    assert tokenize("[BralessForever.com]") == ["bralessforever", "com"]
+
+
 def test_identity_tokens_keep_bare_numbers_drop_junk():
     # Unlike content_tokens, bare numbers survive: a case/episode number is
     # often the ONLY thing distinguishing sibling scenes of one studio.
