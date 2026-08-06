@@ -4,7 +4,9 @@ from __future__ import annotations
 import re
 
 # Tokens that carry no identity information: containers, codecs, sources,
-# resolutions, and scene-release filler. Lowercase.
+# resolutions, domain suffixes, and scene-release filler. Lowercase. Only whole
+# tokens are junked (tokenize splits on non-alnum), so "com" removes the domain
+# suffix in "[BralessForever.com]" while "Comedy" and "Welcome" are untouched.
 JUNK_TOKENS: frozenset[str] = frozenset({
     "xxx", "mp4", "wmv", "avi", "mkv", "mov", "ts",
     "480p", "540p", "720p", "1080p", "2160p", "480", "540", "720", "1080", "2160",
@@ -12,6 +14,7 @@ JUNK_TOKENS: frozenset[str] = frozenset({
     "web", "webdl", "webrip", "web-dl", "dl", "hdrip", "dvdrip", "dvd",
     "h264", "h265", "x264", "x265", "hevc", "avc", "av1",
     "aac", "ac3", "mp3", "flac",
+    "com",  # trackers brand the studio with its domain: "[BralessForever.com]"
     "repack", "internal", "remastered", "proper", "readnfo",
     "siterip", "split", "scenes", "psychoporn", "rq", "kleenex", "kt",
 })
