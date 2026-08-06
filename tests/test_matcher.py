@@ -477,6 +477,69 @@ def test_distinctive_overlap_still_defuses_foreign_veto():
     assert s.confidence >= 75
 
 
+# --- foreign-title veto: sibling scenes (partial overlap, substituted word) ---
+# 2026-08-06 production false grab #2 (BralessForever): same studio, same couple,
+# no date anywhere — {site, performer} alone, which discriminates nothing on a
+# studio's own feed with a recurring pair. The candidate names a DIFFERENT scene
+# ("Beach Days" vs "Shady Beach") but shares the generic word "beach", so the
+# absence arm never armed: only 2 residual tokens, under the filler gate of 3.
+
+BRALESS_SCENE = SceneFingerprint(
+    scene_id=70,
+    site="Braless Forever",
+    site_aliases=("Braless Forever XXX",),
+    date=date(2023, 8, 9),
+    title="Shady Beach",
+    performers=("Emma G", "Rocky"),
+)
+
+
+def test_incident_sibling_title_vetoes():
+    # Half the scene's distinctive words present (beach yes, shady no) and the
+    # candidate substitutes its own ("days"): a sibling scene, not this one.
+    s = score(BRALESS_SCENE, "[BralessForever.com] Emma G & Rocky - Beach Days - 4k")
+    assert s.veto == "foreign-title"
+    assert s.strong_signals == ("site", "performer")
+    assert s.confidence == 0
+
+
+def test_braless_own_release_still_matches():
+    # Recall twin: the right release carries the whole title → 'title' goes
+    # strong and the veto is exempt outright.
+    s = score(BRALESS_SCENE, "[BralessForever.com] Emma G & Rocky - Shady Beach - 4k")
+    assert s.veto is None
+    assert "title" in s.strong_signals
+    assert s.confidence >= 75
+
+
+def test_truncated_title_is_not_a_sibling():
+    # The candidate adds NO word of its own — a truncation of the scene title,
+    # not a substitution. Absence is not contradiction.
+    s = score(BRALESS_SCENE, "[BralessForever.com] Emma G & Rocky - Beach - 4k")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_misspelled_title_is_not_a_sibling():
+    # Coverage drops to 50% on a tracker typo, but the words still read as the
+    # same title — the ratio escape hatch keeps it a match.
+    s = score(BRALESS_SCENE, "[BralessForever.com] Emma G & Rocky - Shadey Beach - 4k")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
+def test_reworded_title_above_coverage_bar_still_matches():
+    # Real production match: the scene title is mangled ("Step-Sistinder") and
+    # the candidate substitutes three words, but 80% of the scene's distinctive
+    # words survive — well clear of the sibling bar.
+    scene = SceneFingerprint(71, "Household Fantasy", (), date(2026, 7, 7),
+                             "Big Titty Step-Sistinder Match", ("Zarina Noir",))
+    s = score(scene, "[ScottStark-HouseholdFantasy] Zarina Noir - Big Titty "
+                     "Step Sister Tinder Match (2026-07-05) [1080p]")
+    assert s.veto is None
+    assert s.confidence >= 75
+
+
 def test_zero_shared_words_cannot_defuse_foreign_veto():
     # rapidfuzz scores unrelated word sets in the high 30s-50s on character
     # overlap alone, so _FOREIGN_TITLE_RATIO sits barely above that noise floor:

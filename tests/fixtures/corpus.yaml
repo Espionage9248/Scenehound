@@ -229,3 +229,30 @@
 - release: "PervTherapy.26.07.20.He.Discovered.Our.PervTherapy.Secret.Three.Cocks.for.River.Lynn.XXX.2160p"
   scene: *river_lynn
   expect: match
+
+# --- 2026-08-06 production false grab #2 (RSS): sibling scene, same studio + couple ---
+# No date anywhere in the release, so {site, performer} carried it alone — and on a
+# studio's own feed with a recurring pair that discriminates nothing (35 + 50 with the
+# multi-performer bonus = 85, plus 15.6 title points from the shared generic "beach").
+# "Beach Days" is not "Shady Beach": half the scene's distinctive words are missing and
+# the candidate substitutes its own. The absence arm could not fire — only 2 residual
+# tokens, under the filler gate of 3. Killed by the sibling arm.
+- release: "[BralessForever.com] Emma G & Rocky - Beach Days - 4k"
+  scene: &shady_beach
+    site: "Braless Forever"
+    aliases: ["Braless Forever XXX"]
+    date: 2023-08-09
+    title: "Shady Beach"
+    performers: ["Emma G", "Rocky"]
+  expect: no_match
+
+# Recall twin: the RIGHT release for that scene still matches (site + full title).
+- release: "[BralessForever.com] Emma G & Rocky - Shady Beach - 4k"
+  scene: *shady_beach
+  expect: match
+
+# Truncation, not substitution: the candidate adds no word of its own, so the
+# missing "Shady" is absence rather than contradiction.
+- release: "[BralessForever.com] Emma G & Rocky - Beach - 4k"
+  scene: *shady_beach
+  expect: match

@@ -64,6 +64,16 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   containing "title" is exempt (the title confirms the scene). Absence is not
   contradiction — a bare Site.YY.MM.DD release (no residual) still matches;
   2 residual tokens are routinely filler ("Bonus Scene") and forgiven.
+- Sibling-scene arm of the same veto: the residual count above measures how much
+  of its OWN a candidate brings, which says nothing when the candidate's title is
+  short. A release sharing one generic word with the scene title while dropping
+  half or more of its distinctive ones, and substituting a word of its own, is
+  the studio's NEXT scene rather than this one ("Beach Days" vs "Shady Beach",
+  same studio, same couple, no date: 2026-08-06 BralessForever grab, 2 residual
+  tokens so the absence arm could never fire). Requires actual overlap — at zero
+  overlap the filler forgiveness above governs — and yields to
+  _SIBLING_TITLE_RATIO so a tracker typo ("Shadey Beach", 50% coverage but ~86
+  similarity) still matches.
 """
 from __future__ import annotations
 
@@ -89,6 +99,14 @@ _FOREIGN_TITLE_RATIO = 40     # below this, the candidate's own words read as a 
 #                               words — not real corroboration).
 _MIN_FOREIGN_RESIDUAL = 3     # candidate content tokens beyond scene site/title/performers;
 #                               2 is routinely filler ("Bonus Scene"), 3+ is a foreign title
+_MAX_SIBLING_COVERAGE = 0.5   # fraction of the scene title's distinctive words the candidate
+#                               carries. At or below half, with a substituted word of its own,
+#                               it names the studio's NEXT scene, not this one (2026-08-06
+#                               BralessForever grab: "Beach Days" vs "Shady Beach", 50%).
+_SIBLING_TITLE_RATIO = 70     # …unless the words still READ as the same title despite the low
+#                               coverage — a tracker typo ("Shadey Beach") rates ~86. Set well
+#                               clear of the 64 the incident scored and the 76 of the lowest
+#                               in-corpus legitimate reword.
 _MIN_PERFORMER_TOKEN_LEN = 3  # single-token performer names shorter than this are ignored
 _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a strong signal
 _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram;
@@ -272,16 +290,44 @@ def score(
         # longer foreign title clears it with nothing real in common. One shared
         # word is the cheapest evidence the ratio measures paraphrase rather
         # than coincidence; without it there is nothing to be forgiving about.
+        shared = set(scene_rest) & set(cand_rest)
+        residual = set(cand_rest) - set(scene_ctoks)  # the candidate's OWN words
         distinct_ratio = (
             fuzz.token_set_ratio(" ".join(scene_rest), " ".join(cand_rest))
-            if set(scene_rest) & set(cand_rest)
+            if shared
             else 0.0  # nothing corroborates; the residual count decides
         )
-        if distinct_ratio < _FOREIGN_TITLE_RATIO:
-            known = set(scene_ctoks) | name_toks
-            if sum(1 for t in set(cand_ctoks) if t not in known) >= _MIN_FOREIGN_RESIDUAL:
-                detail["foreign_title_ratio"] = distinct_ratio  # trace, not points
-                return MatchScore(0, tuple(strong), "foreign-title", detail)
+        coverage = len(shared) / len(set(scene_rest)) if scene_rest else 0.0
+        # Two shapes of "different scene", separated by whether the candidate
+        # engages with the scene's title at all:
+        #
+        # (a) ABSENCE-shaped — shares nothing with the scene title and brings
+        #     enough words of its own to be naming something else. Filler is
+        #     forgiven here ("Bonus Scene" is 2 tokens at zero overlap), so the
+        #     bar is _MIN_FOREIGN_RESIDUAL.
+        # (b) SIBLING-shaped — shares a word but drops half or more of the
+        #     scene's distinctive ones AND substitutes its own. That is the
+        #     studio's NEXT scene, not this one: "Beach Days" vs "Shady Beach",
+        #     same studio, same couple, no date (2026-08-06 BralessForever false
+        #     grab — only 2 residual tokens, so arm (a) could never fire). The
+        #     shared word is generic; the differing one is the whole identity.
+        #     The `shared` guard is load-bearing: without it a zero-overlap
+        #     coverage of 0.0 satisfies the bar and arm (b) swallows the filler
+        #     forgiveness arm (a) exists to grant.
+        #     _SIBLING_TITLE_RATIO is the escape hatch for a title that reads
+        #     the same despite low coverage — a tracker typo ("Shadey Beach")
+        #     drops coverage to 50% but still rates ~86.
+        if (
+            (distinct_ratio < _FOREIGN_TITLE_RATIO
+             and len(residual) >= _MIN_FOREIGN_RESIDUAL)
+            or (shared
+                and residual
+                and coverage <= _MAX_SIBLING_COVERAGE
+                and distinct_ratio < _SIBLING_TITLE_RATIO)
+        ):
+            detail["foreign_title_ratio"] = distinct_ratio  # trace, not points
+            detail["title_coverage"] = coverage             # trace, not points
+            return MatchScore(0, tuple(strong), "foreign-title", detail)
 
     total = sum(detail.values())
     if len(strong) < 2:
