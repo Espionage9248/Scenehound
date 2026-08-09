@@ -88,10 +88,16 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   Explained = junk, scene title, a squashed run of a site/alias/performer name,
   inside a parsed date span (already scored as the date signal — counting it as
   title vocabulary scores one fact twice), inside a [bracketed] or {braced}
-  segment, or after the last junk token (a trailing -GROUP). The bar is 1: on
-  the corpus every genuine match leaves zero residual, so any residual at all is
-  evidence of a different scene. The residual tokens are returned on
-  MatchScore.residual as the evidence a veto-override would name.
+  segment, or the single token trailing the last junk one (a -GROUP tag). That
+  trailer arm is bounded to ONE token because junk is not confined to the tail:
+  "com" is junk, so a "[BralessForever.com]" prefix is, and "4k"/"hd" routinely
+  open release names. Forgiving everything downstream of the last junk token
+  therefore exempted entire titles — "XevBellringer.com - Pregnant Mommy
+  Swallows" scored 100 on an empty residual, which is the very grab this veto
+  exists to kill. The bar is 1: on the corpus every genuine match leaves zero
+  residual, so any residual at all is evidence of a different scene. The
+  residual tokens are returned on MatchScore.residual as the evidence a
+  veto-override would name.
 """
 from __future__ import annotations
 
@@ -203,18 +209,27 @@ def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...
     site/alias/performer name (in any squashed run — "Jane.ONeil"), inside a
     span extract_dates matched (already scored as the date signal), inside a
     [bracketed] or {braced} segment (uploader/studio tags, never title words),
-    or positioned after the last junk token (a trailing -GROUP).
+    or is the lone token trailing the last junk one (a release-group tag:
+    "...XXX.1080p.MP4-GRP").
 
-    Anything left is the candidate's OWN title vocabulary. Note the two
-    deliberate leniencies: bracketed segments and post-junk trailers are
-    excluded wholesale, which can only make the veto more forgiving, never
-    less. That is the safe direction for a rule whose bar is 1."""
+    Anything left is the candidate's OWN title vocabulary. That last arm is
+    bounded to a single trailing token on purpose. Junk is not confined to the
+    tail — JUNK_TOKENS carries "com" precisely because trackers brand the studio
+    with its domain ("[BralessForever.com] ..."), and "4k"/"hd"/"1080p" open
+    plenty of release names — so forgiving *everything* after the last junk
+    token lets one "com" at index 1 exempt the candidate's entire title:
+    "XevBellringer.com - Pregnant Mommy Swallows" scored 100 with an empty
+    residual, the exact false grab this veto exists to kill. One trailing token
+    is the -GROUP tag and nothing else. Forgiveness is not the safe direction
+    here; it is the direction in which a false import gets through, and
+    unpicking one of those is expensive."""
     explained = set(name_ngrams((scene.site, *scene.site_aliases, *scene.performers)))
     explained |= set(identity_tokens(scene.title))
     dates = date_spans(title)
     tags = [m.span() for m in _TAGGED_SEGMENT_RE.finditer(title)]
     toks = [(m.group().lower(), m.span()) for m in _TOKEN_RE.finditer(title)]
     last_junk = max((i for i, (t, _) in enumerate(toks) if t in JUNK_TOKENS), default=-1)
+    trailer = last_junk >= 0 and (len(toks) - 1 - last_junk) <= 1
     out: list[str] = []
     for i, (tok, (a, b)) in enumerate(toks):
         if tok in JUNK_TOKENS or tok in explained:
@@ -223,7 +238,7 @@ def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...
             continue
         if any(s <= a and b <= e for s, e in tags):
             continue
-        if last_junk >= 0 and i > last_junk:
+        if trailer and i > last_junk:
             continue
         out.append(tok)
     return tuple(out)

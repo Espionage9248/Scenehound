@@ -702,6 +702,31 @@ def test_superset_residual_explains_a_punctuation_variant_of_a_performer():
     assert _unexplained_residual(scene, "Jane.ONeil.Latex.Worship.Session.720p") == ()
 
 
+def test_superset_residual_explains_only_a_one_token_release_group_trailer():
+    # Both directions of the trailer explainer, because the bound is the whole
+    # point of it. Forwards: a genuine -GROUP tag trailing the last junk token
+    # is explained.
+    assert _unexplained_residual(MOMMY, "Xev Bellringer - Mommy Swallows 1080p.MP4-GRP") == ()
+    # Backwards: junk is not confined to the tail. "com" is junk (trackers brand
+    # the studio with its domain), and "4k"/"hd"/"1080p" open release names, so
+    # forgiving everything after the LAST junk token anywhere in the string let
+    # one token at index 1 exempt the candidate's entire title.
+    for leak in (
+        "[XevBellringer.com] Pregnant Mommy Swallows",
+        "XevBellringer.com - Pregnant Mommy Swallows",
+        "4K Xev Bellringer - Pregnant Mommy Swallows",
+        "Xev Bellringer - HD - Pregnant Mommy Swallows",
+    ):
+        assert _unexplained_residual(MOMMY, leak) == ("pregnant",), leak
+    assert _unexplained_residual(
+        MOMMY, "[1080p] Xev Bellringer - Mommy Swallows Before School") == ("before", "school")
+    # …and the consequence that actually matters: these are vetoed, not returned
+    # to Whisparr at confidence 100.
+    s = score(MOMMY, "XevBellringer.com - Pregnant Mommy Swallows")
+    assert s.veto == "superset-title"
+    assert s.confidence == 0
+
+
 def test_superset_veto_does_not_fire_without_a_title_signal():
     # Title is not strong here (no site/performer), so the arm must not engage.
     scene = SceneFingerprint(1, "Some Studio", (), date(2026, 7, 7),
