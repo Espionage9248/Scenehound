@@ -119,11 +119,14 @@ const VETO_TEXT = {
   "date-mismatch": "Rejected: the release's date is too far from the scene's — or the match is too weak to forgive the gap.",
   "site-mismatch": "Rejected: the title names a different studio from your wanted list.",
   "foreign-title": "Rejected: the release's title names a different scene — the signals that do agree (studio, date, or performer) can't identify it without a matching title.",
+  "superset-title": "Rejected: the release contains the whole scene title but adds words of its own — it names a longer-titled scene from the same studio.",
 };
 function whyLines(c, threshold) {
   const out = [];
   if (c.veto) {
     out.push(`<span class="no">✗ ${esc(VETO_TEXT[c.veto] || "Rejected: " + c.veto)}</span>`);
+    if (c.residual && c.residual.length)
+      out.push(`<span class="warn">Unexplained words: ${esc(c.residual.join(", "))}</span>`);
     return out;
   }
   for (const sig of c.strong_signals) {

@@ -78,6 +78,11 @@ class CandidateTrace:
     detail: dict[str, float]
     matched: bool
     rewritten_title: str | None      # what we returned to Whisparr, if matched
+    # Identity tokens the matcher could not explain; populated for the
+    # superset-title veto only. The UI names them so an over-firing veto is
+    # visible — vetoed candidates never reach Whisparr, so /ui is the only
+    # place a wrongly-rejected release can be seen.
+    residual: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -329,6 +334,7 @@ class Recorder:
                 detail=dict(ms.detail),
                 matched=ms.confidence >= self._threshold,
                 rewritten_title=rewritten,
+                residual=ms.residual,
             ))
 
     @_shielded

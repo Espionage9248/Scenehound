@@ -472,3 +472,19 @@ def test_record_import_leaves_grabbed_guid_unchanged():
     g = store.snapshot()["sessions"][0]["outcome"]["grabs"][0]
     assert g["imported"]["movie_id"] == 7
     assert g["grabbed_guid"] == "g1"
+
+
+def test_snapshot_carries_the_superset_residual(store=None):
+    if store is None:
+        store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "xevbellringer 06.01.2015")
+    cand = ReleaseCandidate(title="Xev Bellringer - Mommy Swallows Before School",
+                            guid="g1", link="http://p/dl/1")
+    ms = MatchScore(0, ("site", "performer", "title"), "superset-title",
+                    {"superset_residual": 2.0}, ("before", "school"))
+    rec.scored([(cand, SCENE, ms, None)])
+    rec.commit()
+
+    c = store.snapshot()["sessions"][0]["candidates"][0]
+    assert c["veto"] == "superset-title"
+    assert c["residual"] == ["before", "school"]
