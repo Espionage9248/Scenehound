@@ -54,6 +54,16 @@ class UiConfig:
 
 
 @dataclass(frozen=True)
+class NamingConfig:
+    # Append the tracker's own title, verbatim, to the emitted Torznab <title>.
+    # An output concern, deliberately not under `matching:` — that section is
+    # the accuracy knobs. Default on: Whisparr's parser ignores everything after
+    # the quality token (verified 2026-08-09), so this costs nothing, and an
+    # escape hatch defaulted off is an escape hatch nobody finds.
+    original_title_suffix: bool = True
+
+
+@dataclass(frozen=True)
 class Config:
     whisparr: ServiceConfig
     prowlarr: ServiceConfig
@@ -63,6 +73,7 @@ class Config:
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     import_completer: ImportCompleterConfig = field(default_factory=ImportCompleterConfig)
     ui: UiConfig = field(default_factory=UiConfig)
+    naming: NamingConfig = field(default_factory=NamingConfig)
     log_level: str = "info"
 
 
@@ -124,6 +135,17 @@ def _ui(raw: dict, env: Mapping[str, str]) -> UiConfig:
     )
 
 
+def _naming(raw: dict, env: Mapping[str, str]) -> NamingConfig:
+    d = NamingConfig()
+    n = raw.get("naming", {}) or {}
+    return NamingConfig(
+        original_title_suffix=_env_bool(
+            env, "SCENEHOUND_ORIGINAL_TITLE_SUFFIX",
+            bool(n.get("original_title_suffix", d.original_title_suffix)),
+        ),
+    )
+
+
 def load_config(config_dir: Path, env: Mapping[str, str]) -> Config:
     path = config_dir / "config.yaml"
     raw = yaml.safe_load(path.read_text()) or {}
@@ -154,5 +176,6 @@ def load_config(config_dir: Path, env: Mapping[str, str]) -> Config:
         ),
         import_completer=_import_completer(raw, env),
         ui=_ui(raw, env),
+        naming=_naming(raw, env),
         log_level=env.get("SCENEHOUND_LOG_LEVEL", raw.get("log_level", "info")),
     )

@@ -125,6 +125,9 @@ Torznab endpoints) that makes each search legible:
   produces several grabs (an RSS sweep taking multiple candidates), each grab
   keeps its own badge and import stamp, and the session card shows counted
   pills such as **Imported ×2**.
+  A release that contains the whole scene title but adds words of its own is
+  rejected as a longer-titled scene of the same studio, and the UI names the
+  words it could not explain.
 - **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
   Whisparr grabs a result and **Imported** when the import-completer lands it.
 
@@ -204,9 +207,20 @@ full-detail record.
 
 `info` shows one line per search/RSS decision with scores. `debug` shows every
 candidate's per-signal breakdown. A rejected match always says which signal
-fell short. Wrong grab? The original tracker title is in the log line and in
-the `scenehound_original_title` attribute of every rewritten result — add the
-case to `tests/fixtures/corpus.yaml` and it becomes a regression test.
+fell short.
+
+Wrong grab? The original tracker title is right there in the result Whisparr
+shows you — Scenehound appends it verbatim in square brackets:
+
+    Xev.Bellringer.2015-01-06.Mommy.Swallows.XXX.720p [Xev Bellringer - Mommy Swallows Before Your Date (720p)]
+
+Whisparr identifies an adult scene by studio + date and ignores everything after
+the quality token, so the suffix costs nothing and makes an Interactive Search
+decidable when several releases collapse to one canonical name. Set
+`SCENEHOUND_ORIGINAL_TITLE_SUFFIX=false` (or `naming: {original_title_suffix:
+false}`) to switch it off. It is also still in the log line and in the
+`scenehound_original_title` attribute of every rewritten result — add the case to
+`tests/fixtures/corpus.yaml` and it becomes a regression test.
 
 ## Not in v1 (deliberate)
 

@@ -190,3 +190,20 @@ def test_date_skew_default_consistent_across_layers():
     d = MatchingConfig().date_skew_days
     for fn in (score, match_pack, _match_one, ImportCompleter.__init__):
         assert inspect.signature(fn).parameters["date_skew_days"].default == d, fn
+
+
+def test_naming_defaults_to_suffix_on(tmp_path):
+    (tmp_path / "config.yaml").write_text("indexers: []\n")
+    cfg = load_config(tmp_path, {"SCENEHOUND_API_KEY": "k"})
+    assert cfg.naming.original_title_suffix is True
+
+
+def test_naming_reads_yaml_and_env(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        "indexers: []\nnaming:\n  original_title_suffix: false\n")
+    cfg = load_config(tmp_path, {"SCENEHOUND_API_KEY": "k"})
+    assert cfg.naming.original_title_suffix is False
+
+    cfg = load_config(tmp_path, {"SCENEHOUND_API_KEY": "k",
+                                 "SCENEHOUND_ORIGINAL_TITLE_SUFFIX": "true"})
+    assert cfg.naming.original_title_suffix is True
