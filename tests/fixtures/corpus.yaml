@@ -256,3 +256,54 @@
 - release: "[BralessForever.com] Emma G & Rocky - Beach - 4k"
   scene: *shady_beach
   expect: match
+
+# 2026-08-09 Xev Bellringer false grab. The wanted scene "Mommy Swallows" is a
+# substring of seven longer-titled scenes from the same studio. Containment alone
+# made `title` a STRONG signal, which in turn exempted every one of them from the
+# foreign-title veto — all scored 100 and were returned to Whisparr. A candidate
+# carrying the whole scene title PLUS identity tokens no signal explains names a
+# longer-titled scene, not this one.
+- release: "Xev Bellringer - Mommy Swallows (.mp4)"     # the one real match
+  scene: &mommy
+    site: "Xev Bellringer"
+    aliases: ["XevBellringer"]
+    date: 2015-01-06
+    title: "Mommy Swallows"
+    performers: ["Xev Bellringer"]
+  expect: match
+
+- release: "[XevUnleashed] Xev Bellringer - Mommy Swallows - 4K 2160p"  # bracketed uploader tag
+  scene: *mommy
+  expect: match
+
+- release: "Xev Bellringer - Mommy Swallows [Bonus Scene] 1080p"        # bracketed filler
+  scene: *mommy
+  expect: match
+
+- release: "[XevUnleashed] Xev Bellringer - Pregnant Mommy Swallows - 4K 2160p"
+  scene: *mommy
+  expect: no_match
+
+- release: "[Clips4Sale] Pregnant Mommy Swallows [Xev Bellringer] (720p)"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Pregnant Mommy Swallows (1080p)"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Mommy Swallows 2"          # a bare number IS the identity
+  scene: *mommy
+  expect: no_match
+
+- release: "Stripper Step-Mommy Swallows Xev Bellringer"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Mommy Swallows Before Your Date (720p)"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Mommy Swallows Before School (.mp4)"
+  scene: *mommy
+  expect: no_match

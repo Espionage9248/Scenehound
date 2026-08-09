@@ -77,16 +77,34 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   "beach days" rates 76.2 on shared letters alone, whereas the real question
   ("shady" vs the substituted "days" = 44.4) separates cleanly from a tracker
   typo ("shady" vs "shadey" = 90.9).
+- Superset-title veto: `title` goes strong on CONTAINMENT — every scene token
+  present in the candidate — which says nothing about what the candidate brought
+  of its own. "Mommy Swallows" is a substring of "Mommy Swallows Before School",
+  "Pregnant Mommy Swallows" and "Stripper Step-Mommy Swallows"; all three are
+  different scenes of the same studio, all scored 100, and the strong `title`
+  additionally EXEMPTED them from the foreign-title veto (2026-08-09 Xev
+  Bellringer false grab: 9 of 10 returned releases were the wrong scene). Any
+  identity token the candidate carries that no signal explains vetoes the match.
+  Explained = junk, scene title, a squashed run of a site/alias/performer name,
+  inside a parsed date span (already scored as the date signal — counting it as
+  title vocabulary scores one fact twice), inside a [bracketed] or {braced}
+  segment, or after the last junk token (a trailing -GROUP). The bar is 1: on
+  the corpus every genuine match leaves zero residual, so any residual at all is
+  evidence of a different scene. The residual tokens are returned on
+  MatchScore.residual as the evidence a veto-override would name.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
-from scenehound.dates import extract_dates
+from scenehound.dates import date_spans, extract_dates
 from scenehound.models import SceneFingerprint
-from scenehound.normalize import content_tokens, identity_tokens, squash, tokenize
+from scenehound.normalize import (
+    JUNK_TOKENS, content_tokens, identity_tokens, name_ngrams, squash, tokenize,
+)
 
 STRONG_DATE = 40
 STRONG_SITE = 35
@@ -116,6 +134,8 @@ _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a 
 _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram;
 #                               wanted_index._MAX_NAME_TOKENS must stay >= this or the
 #                               RSS pre-filter stops being a lossless superset.
+_TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
+_TAGGED_SEGMENT_RE = re.compile(r"[\[\{][^\]\}]*[\]\}]")
 
 
 @dataclass(frozen=True)
@@ -124,6 +144,11 @@ class MatchScore:
     strong_signals: tuple[str, ...]
     veto: str | None
     detail: dict[str, float]
+    # The candidate's identity tokens that no signal explains. Populated only by
+    # the superset-title veto; it is the evidence a future veto-override needs to
+    # name what it is overriding ("vetoed on: pregnant"). Defaulted so existing
+    # four-argument constructions stay valid.
+    residual: tuple[str, ...] = ()
 
 
 def _title_ngrams(title: str) -> frozenset[str]:
@@ -169,6 +194,39 @@ def _performer_present(performer: str, ngrams: frozenset[str]) -> bool:
     if len(p_toks) == 1 and len(p_toks[0]) < _MIN_PERFORMER_TOKEN_LEN:
         return False
     return squash(performer) in ngrams
+
+
+def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...]:
+    """The candidate's identity tokens that no signal accounts for.
+
+    A token is explained when it is junk, part of the scene title, part of a
+    site/alias/performer name (in any squashed run — "Jane.ONeil"), inside a
+    span extract_dates matched (already scored as the date signal), inside a
+    [bracketed] or {braced} segment (uploader/studio tags, never title words),
+    or positioned after the last junk token (a trailing -GROUP).
+
+    Anything left is the candidate's OWN title vocabulary. Note the two
+    deliberate leniencies: bracketed segments and post-junk trailers are
+    excluded wholesale, which can only make the veto more forgiving, never
+    less. That is the safe direction for a rule whose bar is 1."""
+    explained = set(name_ngrams((scene.site, *scene.site_aliases, *scene.performers)))
+    explained |= set(identity_tokens(scene.title))
+    dates = date_spans(title)
+    tags = [m.span() for m in _TAGGED_SEGMENT_RE.finditer(title)]
+    toks = [(m.group().lower(), m.span()) for m in _TOKEN_RE.finditer(title)]
+    last_junk = max((i for i, (t, _) in enumerate(toks) if t in JUNK_TOKENS), default=-1)
+    out: list[str] = []
+    for i, (tok, (a, b)) in enumerate(toks):
+        if tok in JUNK_TOKENS or tok in explained:
+            continue
+        if any(s <= a and b <= e for s, e in dates):
+            continue
+        if any(s <= a and b <= e for s, e in tags):
+            continue
+        if last_junk >= 0 and i > last_junk:
+            continue
+        out.append(tok)
+    return tuple(out)
 
 
 def score(
@@ -254,6 +312,21 @@ def score(
         if date_secondary:
             veto_detail["date_secondary_reading"] = 1.0
         return MatchScore(0, (), "date-mismatch", veto_detail)
+
+    # --- superset-title veto ---
+    # `title` became strong by CONTAINMENT: every scene token is present in the
+    # candidate. That says nothing about what else the candidate brought. A
+    # candidate carrying the whole scene title plus vocabulary of its own names a
+    # longer-titled scene of the same studio ("Mommy Swallows" vs "Mommy Swallows
+    # Before School": same site, same performer, both score 100). The foreign-title
+    # veto below cannot catch this — it needs `title` absent from the strong set,
+    # and its sibling arm measures words the candidate DROPPED, which here is none
+    # (coverage 1.0). Demotion does not work either: 35 + 35 + 25 = 95, still over
+    # threshold. Placed after the date veto so a contradicting date keeps
+    # precedence and existing corpus rows keep their veto strings.
+    if "title" in strong and (residual := _unexplained_residual(scene, title)):
+        detail["superset_residual"] = float(len(residual))
+        return MatchScore(0, tuple(strong), "superset-title", detail, residual)
 
     # --- foreign-title veto ---
     # A title-less strong set (any pair or triple of site/date/performer, no
