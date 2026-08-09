@@ -44,7 +44,21 @@ def _dotify(text: str) -> str:
     return _SANITIZE.sub(".", text).strip(".")
 
 
-def rewrite_title(scene: SceneFingerprint, original_title: str) -> str:
+def rewrite_title(
+    scene: SceneFingerprint, original_title: str, *, include_original: bool = False
+) -> str:
+    """The canonical name Whisparr parses, optionally followed by the tracker's
+    own title in square brackets.
+
+    The suffix is verbatim — not scrubbed, not truncated. Verified against
+    Whisparr's own GET /api/v3/parse (2026-08-09): studio, releaseDate, quality
+    and scene mapping are identical with and without it, because Whisparr
+    identifies an adult scene by studio + date and ignores everything after the
+    quality token. A DASH separator is deliberately not used: it made the parser
+    emit a phantom releaseGroup, which would reach Whisparr's file naming.
+
+    Defaults to off so the pure function keeps its historical contract; the
+    service passes the config value explicitly at every call site."""
     parts = [
         _dotify(scene.site),
         scene.date.isoformat(),
@@ -52,4 +66,5 @@ def rewrite_title(scene: SceneFingerprint, original_title: str) -> str:
         "XXX",
         *extract_quality_tokens(original_title),
     ]
-    return ".".join(p for p in parts if p)
+    canonical = ".".join(p for p in parts if p)
+    return f"{canonical} [{original_title}]" if include_original else canonical
