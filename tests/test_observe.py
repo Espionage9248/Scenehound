@@ -262,6 +262,35 @@ def test_record_grab_correlates_by_original_title():
     assert s["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH2"
 
 
+def test_record_grab_correlates_by_canonical_prefix_of_suffixed_title():
+    # Part A appends " [<original tracker title>]" to what we hand Whisparr, so
+    # that whole string is what gets stored as rewritten_title. Whether Whisparr's
+    # On Grab webhook echoes it verbatim is UNVERIFIED — the parse contract was
+    # checked against GET /api/v3/parse, and CI cannot reach a live Whisparr. If
+    # it reports the canonical part alone, exact matching drops the grab into
+    # unmatched and the UI ladder stalls at Matched with no error logged. The
+    # prefix arm keeps that from being a silent failure.
+    store = _store_with_matched_session(
+        rewritten="That Fetish Girl 2026-07-07 Latex 1080p [TFG.26.07.07.Latex.1080p]"
+    )
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH_PFX")
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH_PFX"
+    assert s["outcome"]["grabs"][0]["grabbed_guid"] == "g1"
+    assert store.snapshot()["unmatched_grabs"] == []
+
+
+def test_record_grab_prefix_arm_does_not_match_a_different_canonical():
+    # The hedge must not become a fuzzy matcher: only the exact canonical prefix
+    # correlates, never a shorter left-anchored slice of it.
+    store = _store_with_matched_session(
+        rewritten="That Fetish Girl 2026-07-07 Latex 1080p [TFG.26.07.07.Latex.1080p]"
+    )
+    store.record_grab("That Fetish Girl 2026-07-07 Latex", "HASH_NOPE")
+    assert store.snapshot()["sessions"][0]["outcome"]["grabs"] == []
+    assert len(store.snapshot()["unmatched_grabs"]) == 1
+
+
 def test_record_grab_picks_newest_matching_session():
     store = SessionStore(max_sessions=10, max_candidates=200)
     for _ in range(2):
