@@ -172,7 +172,8 @@ A token is **explained** when it is any of:
 | Scene title identity tokens | the matched title itself | existing |
 | **Name n-grams** — squashed contiguous runs of each site/alias/performer's own tokens | `Jane.ONeil` → `oneil` | new |
 | Inside a span matched by `extract_dates` | `26`,`07`,`07` | new |
-| Inside a `[...]` or `{...}` segment | `[FamilyTherapy]`, `{Se7enSeas}` | new |
+| Inside a `[...]`, `{...}` or `(...)` segment | `[FamilyTherapy]`, `{Se7enSeas}`, `(Oculus 8K, UHD)` | new |
+| `_RESIDUAL_IGNORE` — format words, residual-only, never merged into `JUNK_TOKENS` | `hdr`, `8k`, `sbs` | new (post-review) |
 | After the last junk token | `grp` in `MP4-GRP` | new |
 
 The bar is **1**: any unexplained token vetoes.
@@ -243,15 +244,53 @@ a veto is always inspectable, and `VETO_TEXT` in
 [ui.html](../../../scenehound/static/ui.html) gains a `superset-title` entry
 (its fallback already renders unknown vetoes readably).
 
-**The explainer list is the fragile part of this design.** The bar of 1 rests on 10
-corpus rows and 10 hand-checked candidates. A tracker convention not yet seen — a
-trailing uploader name with no bracket and no preceding junk token — would cost a
-true match. This is an accepted risk, mitigated by the `/ui` trace, the corpus
-ratchet, and the planned override.
+**The explainer list is the fragile part of this design, and the first cut of it
+was too narrow.** The bar of 1 rests on 10 corpus rows and 10 hand-checked
+candidates — one studio, one punctuation style — and review found it dropping
+releases that are unambiguously the right scene. Two were repaired in the same
+branch: `(...)` joined `[...]` and `{...}` as a tagged segment (nine corpus rows
+already use parens), and `_RESIDUAL_IGNORE` — a set consumed *only* by
+`_unexplained_residual`, deliberately not merged into `JUNK_TOKENS`, which also
+feeds `identity_tokens` and would move unrelated verdicts — forgives format words
+like `HDR` that junk does not list.
 
-**Two brackets that never meet.** Part A brackets the *outgoing* title to Whisparr;
-Part B ignores brackets in *incoming* tracker titles. They operate on opposite
-sides of the proxy and share no code. The resemblance is coincidental.
+**Accepted regression: studios whose Whisparr title is not the release's
+descriptive title.** ShopLyfter is the worked example, and it is already in the
+corpus: the scene is titled `Case No. 2658794`, while the release calls itself
+`ShopLyfter - 18.07.25 - Case No. 2658794 - Sakura Lin, the Rich Girl vs Two
+Cocks - 1080p {Se7enSeas}`. Site, date and the full numeric title all agree, and
+the veto still fires on the eight-token descriptive tail the studio adds. Every
+genuine release from such a studio is lost. The same shape costs an unbracketed
+filler pair (`Mommy Swallows Bonus Scene 1080p`) too.
+
+This is a real loss, not a theoretical one, and it is **not softened by a retry**:
+`api.py`'s RSS path calls the same `score()`, so RSS vetoes identically. There is
+no second chance and nothing to see from inside Whisparr — the scene simply stays
+missing. It also reaches the import-completer, where the all-or-nothing pack rule
+means one descriptively-named file blocks an entire pack. The only place the loss
+is visible is the `/ui` trace, which names the residual tokens.
+
+It is accepted rather than fixed because the fix — scoping the residual to the
+segment the matched title lives in — is unvalidated and would loosen the veto back
+toward the false grabs it exists to stop. Deliberately no corpus row asserts
+`no_match` for these two shapes: they *are* the right scene, and pinning them would
+ratchet a known-wrong verdict in as correct. Mitigated by the `/ui` trace and the
+planned override; revisit with segment scoping when there is evidence to validate
+it against.
+
+**Two brackets that do meet, on one path that does not exist yet.** Part A brackets
+the *outgoing* title to Whisparr; Part B treats brackets in *incoming* tracker
+titles as explained. They sit on opposite sides of the proxy and share no code
+today, but the resemblance is not harmless: feed Part A's own output back into
+`score()` and Part B's bracket explainer swallows the entire payload, so
+`Xev.Bellringer.2015-01-06.Mommy.Swallows.XXX [Xev Bellringer - Mommy Swallows
+Before School (.mp4)]` re-scores as `veto=None, confidence=100` — the veto defeated
+by the thing it is supposed to catch. **There is no live path today**: all three
+`score()` callers are fed either a Prowlarr title or an on-disk basename, never an
+emitted one. But the already-designed veto-override feature would by construction
+re-examine an emitted candidate, so the delimiter choice is load-bearing for it and
+that arm must not re-score a suffixed title. Nothing is tested here, because
+testing behaviour on a path that does not exist pins the wrong thing.
 
 ---
 
@@ -279,8 +318,18 @@ sides of the proxy and share no code. The resemblance is coincidental.
 
 Neither part does I/O. Both are pure functions over strings, so there are no new
 failure modes — only a changed verdict. The veto returns `MatchScore(0, …)` exactly
-like its three siblings. A missing or malformed config value falls back to the
-`True` default. An unresolvable scene still degrades to passthrough, unrewritten.
+like its three siblings. A **missing** config value falls back to the `True`
+default; a **malformed** one does not, and that is worth stating plainly because
+the default is what makes this feature visible. `_env_bool` resolves anything it
+does not recognise to `False`, so `SCENEHOUND_ORIGINAL_TITLE_SUFFIX=yep` silently
+turns the suffix off, as does an empty value. In YAML the trap runs the other way:
+a quoted `original_title_suffix: "false"` is a non-empty string, `bool()` of it is
+`True`, and the suffix stays on; a bare `original_title_suffix:` (null) reads as
+`False`. This is not a defect of this feature — the loader is character-for-
+character the same as its siblings `_ui` and `_import_completer`, and diverging
+here would make one flag behave unlike every other. Recorded as known behaviour;
+the code is deliberately left alone. An unresolvable scene still degrades to
+passthrough, unrewritten.
 
 ## Testing
 

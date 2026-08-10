@@ -164,9 +164,12 @@ def test_rss_mode_rewrites_to_best_scene_not_first(app):
     r = TestClient(app).get(
         "/indexer/empornium/api", params={"t": "search", "apikey": "shk"}
     )
-    # This test's feed title ("ThatFetishGirl...", no dots) differs from
-    # FEED_MATCHING's ("TFG.26.07.07..."), so the bracketed suffix differs
-    # from REWRITTEN too — it is the tracker's own title, verbatim.
+    # This test's feed title spells the site out and dates it in full
+    # ("ThatFetishGirl.2026-07-07...") where FEED_MATCHING uses the alias and a
+    # yy.mm.dd stamp ("TFG.26.07.07..."). Both are dotted; the site token and
+    # date form are what differ. So the bracketed suffix differs from REWRITTEN's
+    # too — it is the tracker's own title, verbatim, not a normalized one. Do not
+    # collapse this assertion into the shared REWRITTEN constant.
     assert titles(r) == [
         "That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"
         " [ThatFetishGirl.2026-07-07.Latex.Worship.Session.1080p]"
