@@ -87,9 +87,11 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   identity token the candidate carries that no signal explains vetoes the match.
   Explained = junk, scene title, a squashed run of a site/alias/performer name,
   inside a parsed date span (already scored as the date signal — counting it as
-  title vocabulary scores one fact twice), inside a [bracketed] or {braced}
-  segment, or the single token trailing the last junk one (a -GROUP tag). That
-  trailer arm is bounded to ONE token because junk is not confined to the tail:
+  title vocabulary scores one fact twice), inside a [bracketed], {braced} or
+  (parenthesised) segment, a residual-only technical token (_RESIDUAL_IGNORE:
+  format words too narrow to widen JUNK_TOKENS for), or the single token
+  trailing the last junk one (a -GROUP tag). That trailer arm is bounded to ONE
+  token because junk is not confined to the tail:
   "com" is junk, so a "[BralessForever.com]" prefix is, and "4k"/"hd" routinely
   open release names. Forgiving everything downstream of the last junk token
   therefore exempted entire titles — "XevBellringer.com - Pregnant Mommy
@@ -97,7 +99,17 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   exists to kill. The bar is 1: on the corpus every genuine match leaves zero
   residual, so any residual at all is evidence of a different scene. The
   residual tokens are returned on MatchScore.residual as the evidence a
-  veto-override would name.
+  veto-override would name. A bar that low makes the explainer set the whole
+  design, and its first calibration was too narrow — it was drawn from one
+  studio in one punctuation style and silently dropped true matches carrying a
+  parenthesised or unlisted-format tail. Widening it is the recall-restoring
+  direction and is done ONLY in ways that cannot un-veto a superset title (see
+  _RESIDUAL_IGNORE). One shape is knowingly still lost: a studio whose Whisparr
+  title is not the release's descriptive one (ShopLyfter's "Case No. NNNNNNN")
+  vetoes on the descriptive tail. Segment-scoping the residual would fix it and
+  is deferred as unvalidated — it risks loosening the veto back toward the
+  grabs above. The loss is invisible in Whisparr (api.py's RSS path scores
+  identically, so there is no second chance) and visible only in /ui.
 """
 from __future__ import annotations
 
@@ -141,7 +153,38 @@ _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n
 #                               wanted_index._MAX_NAME_TOKENS must stay >= this or the
 #                               RSS pre-filter stops being a lossless superset.
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
-_TAGGED_SEGMENT_RE = re.compile(r"[\[\{][^\]\}]*[\]\}]")
+# Uploader/studio/technical tags, in all three punctuation styles trackers
+# actually use. Parentheses were missing from the first cut and nine corpus rows
+# use them — "(Oculus 8K, UHD)", "(2026.07.21)", "(720p)" — so a genuine release
+# whose tail happened to be round-bracketed was vetoed where the identical
+# square-bracketed one matched. The character classes are deliberately not
+# paired: a release name is not a grammar, and requiring "[" to close with "]"
+# only means a mismatched pair goes unexplained, which is the strict direction.
+_TAGGED_SEGMENT_RE = re.compile(r"[\[\{\(][^\]\}\)]*[\]\}\)]")
+
+# Format/technical vocabulary consumed ONLY by _unexplained_residual.
+#
+# This is deliberately NOT merged into JUNK_TOKENS, and that separation is the
+# entire point. JUNK_TOKENS also feeds identity_tokens and content_tokens, so
+# widening it moves near_exact, the title ratio, and both foreign-title arms —
+# every verdict in the file. A residual-only set can only ever forgive a token
+# the superset veto was about to fire on, so it cannot change any existing
+# verdict; it can only restore a true match the veto's bar of 1 was dropping.
+# Keep it that way: if a token belongs in identity scoring too, it belongs in
+# JUNK_TOKENS and needs corpus evidence for the wider blast radius.
+#
+# Membership rule: a word that is never a scene's own vocabulary — HDR/codec/
+# container/language/VR-projection markers. No bare integers. identity_tokens
+# keeps bare numbers on purpose (the 2026-07-19 ShopLyfter false grab: digit-
+# stripping collapsed every "Case No. N" to the same boilerplate), and
+# "Mommy Swallows 2" is a motivating false positive whose whole residual is
+# "2" — re-junking any bare number here would chip at that decision from the
+# other side. Alphanumeric markers ("8k", "10bit") are not bare integers.
+_RESIDUAL_IGNORE = frozenset({
+    "hdr", "hdr10", "dv", "10bit", "bluray", "bdrip", "ddp", "eac3", "opus",
+    "vp9", "amzn", "sub", "subs", "eng", "multi", "oculus",
+    "5k", "6k", "8k", "lr", "sbs",
+})
 
 
 @dataclass(frozen=True)
@@ -208,9 +251,10 @@ def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...
     A token is explained when it is junk, part of the scene title, part of a
     site/alias/performer name (in any squashed run — "Jane.ONeil"), inside a
     span extract_dates matched (already scored as the date signal), inside a
-    [bracketed] or {braced} segment (uploader/studio tags, never title words),
-    or is the lone token trailing the last junk one (a release-group tag:
-    "...XXX.1080p.MP4-GRP").
+    [bracketed], {braced} or (parenthesised) segment (uploader/studio/technical
+    tags, never title words), a residual-only technical token (_RESIDUAL_IGNORE
+    — the format words JUNK_TOKENS cannot safely absorb), or is the lone token
+    trailing the last junk one (a release-group tag: "...XXX.1080p.MP4-GRP").
 
     Anything left is the candidate's OWN title vocabulary. That last arm is
     bounded to a single trailing token on purpose. Junk is not confined to the
@@ -222,7 +266,15 @@ def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...
     residual, the exact false grab this veto exists to kill. One trailing token
     is the -GROUP tag and nothing else. Forgiveness is not the safe direction
     here; it is the direction in which a false import gets through, and
-    unpicking one of those is expensive."""
+    unpicking one of those is expensive.
+
+    The counterweight, learned after the first cut shipped: at a bar of 1 a
+    single unrecognised format word ("...XXX.2160p.HDR.MP4-KTR") is fatal to a
+    release that is unambiguously the right scene, and the loss is silent —
+    vetoed candidates never reach Whisparr and the RSS path scores identically,
+    so there is no second chance and nothing to see from inside Whisparr. The
+    two arms that answer that (parentheses, _RESIDUAL_IGNORE) are both chosen so
+    they cannot forgive a word a studio could name a scene with."""
     explained = set(name_ngrams((scene.site, *scene.site_aliases, *scene.performers)))
     explained |= set(identity_tokens(scene.title))
     dates = date_spans(title)
@@ -232,7 +284,7 @@ def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...
     trailer = last_junk >= 0 and (len(toks) - 1 - last_junk) <= 1
     out: list[str] = []
     for i, (tok, (a, b)) in enumerate(toks):
-        if tok in JUNK_TOKENS or tok in explained:
+        if tok in JUNK_TOKENS or tok in _RESIDUAL_IGNORE or tok in explained:
             continue
         if any(s <= a and b <= e for s, e in dates):
             continue
