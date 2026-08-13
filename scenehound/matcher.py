@@ -104,12 +104,19 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   studio in one punctuation style and silently dropped true matches carrying a
   parenthesised or unlisted-format tail. Widening it is the recall-restoring
   direction and is done ONLY in ways that cannot un-veto a superset title (see
-  _RESIDUAL_IGNORE). One shape is knowingly still lost: a studio whose Whisparr
-  title is not the release's descriptive one (ShopLyfter's "Case No. NNNNNNN")
-  vetoes on the descriptive tail. Segment-scoping the residual would fix it and
-  is deferred as unvalidated — it risks loosening the veto back toward the
-  grabs above. The loss is invisible in Whisparr (api.py's RSS path scores
-  identically, so there is no second chance) and visible only in /ui.
+  _RESIDUAL_IGNORE). What is knowingly still lost is any release carrying real
+  vocabulary the scene record does not know about — not one studio's habit, so
+  do not read the examples as the bound. Three measured instances: a studio
+  whose Whisparr title is not the release's descriptive one (ShopLyfter's
+  "Case No. NNNNNNN" vetoes on the descriptive tail); a release crediting a
+  performer the fingerprint omits ("Xev Bellringer & Jane Doe - Mommy Swallows"
+  vetoes on {jane, doe}), which is per-release and studio-independent; and a
+  bare-integer format marker, since _RESIDUAL_IGNORE admits no bare numbers
+  ("... River Lynn 180 LR 8K" vetoes on {180}, though the parenthesised form
+  matches). Segment-scoping the residual would fix the first and is deferred as
+  unvalidated — it risks loosening the veto back toward the grabs above. The
+  loss is invisible in Whisparr (api.py's RSS path scores identically, so there
+  is no second chance) and visible only in /ui.
 """
 from __future__ import annotations
 
@@ -158,8 +165,13 @@ _TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
 # use them — "(Oculus 8K, UHD)", "(2026.07.21)", "(720p)" — so a genuine release
 # whose tail happened to be round-bracketed was vetoed where the identical
 # square-bracketed one matched. The character classes are deliberately not
-# paired: a release name is not a grammar, and requiring "[" to close with "]"
-# only means a mismatched pair goes unexplained, which is the strict direction.
+# paired: a release name is not a grammar, and trackers mix openers and closers
+# often enough that pairing would cost more true matches than it buys. Be clear
+# which way that cuts — it is the LOOSER direction, not the stricter one. An
+# unclosed "[" pairs with the next ")" and the span swallows whatever sits
+# between: "Mommy Swallows [Bonus Scene 1080p) extra words here" explains away
+# "bonus scene". Acceptable only because the veto's bar is 1 and forgiving a
+# tagged span can lose a false-positive catch, never invent one.
 _TAGGED_SEGMENT_RE = re.compile(r"[\[\{\(][^\]\}\)]*[\]\}\)]")
 
 # Format/technical vocabulary consumed ONLY by _unexplained_residual.
@@ -180,6 +192,12 @@ _TAGGED_SEGMENT_RE = re.compile(r"[\[\{\(][^\]\}\)]*[\]\}\)]")
 # "Mommy Swallows 2" is a motivating false positive whose whole residual is
 # "2" — re-junking any bare number here would chip at that decision from the
 # other side. Alphanumeric markers ("8k", "10bit") are not bare integers.
+#
+# Note the asymmetry before you "tidy" it: "4k" is in JUNK_TOKENS, so it is junk
+# everywhere, while 5k/6k/8k are residual-only and still count as identity and
+# content tokens in every other arm. That is not an oversight — promoting them
+# to JUNK_TOKENS moves near_exact and the foreign-title verdicts, which needs
+# corpus evidence this set deliberately does not require.
 _RESIDUAL_IGNORE = frozenset({
     "hdr", "hdr10", "dv", "10bit", "bluray", "bdrip", "ddp", "eac3", "opus",
     "vp9", "amzn", "sub", "subs", "eng", "multi", "oculus",

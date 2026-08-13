@@ -220,9 +220,12 @@ veto.
 
 A future feature will let a veto be overridden on the Scenehound side. To make that
 possible without re-deriving anything, the veto emits the evidence, not just a
-label: `detail["superset_residual"]` carries the actual unexplained tokens. An
-override UI can then say *"vetoed on: pregnant"* and allow that one release, rather
-than forcing the rule to be loosened globally. Nothing is built for this here.
+label: the unexplained tokens ride on `MatchScore.residual`, and
+`detail["superset_residual"]` carries their count. (`detail` is typed
+`dict[str, float]`, so it could never have carried the tokens themselves — an
+earlier draft of this section claimed it did.) An override UI can then say
+*"vetoed on: pregnant"* and allow that one release, rather than forcing the rule
+to be loosened globally. Nothing is built for this here.
 
 ### Reach
 
@@ -254,14 +257,31 @@ already use parens), and `_RESIDUAL_IGNORE` — a set consumed *only* by
 feeds `identity_tokens` and would move unrelated verdicts — forgives format words
 like `HDR` that junk does not list.
 
-**Accepted regression: studios whose Whisparr title is not the release's
-descriptive title.** ShopLyfter is the worked example, and it is already in the
-corpus: the scene is titled `Case No. 2658794`, while the release calls itself
-`ShopLyfter - 18.07.25 - Case No. 2658794 - Sakura Lin, the Rich Girl vs Two
-Cocks - 1080p {Se7enSeas}`. Site, date and the full numeric title all agree, and
-the veto still fires on the eight-token descriptive tail the studio adds. Every
-genuine release from such a studio is lost. The same shape costs an unbracketed
-filler pair (`Mommy Swallows Bonus Scene 1080p`) too.
+**Accepted regression: any release carrying real vocabulary the scene record
+does not know about.** State the rule that way, because the examples below are
+not the bound — read it as one studio's naming habit and you will
+under-estimate this badly. Three instances are measured:
+
+1. *A studio whose Whisparr title is not the release's descriptive title.*
+   ShopLyfter is the worked example. Its scene is titled `Case No. 2658794`,
+   while the release calls itself `ShopLyfter - 18.07.25 - Case No. 2658794 -
+   Sakura Lin, the Rich Girl vs Two Cocks - 1080p {Se7enSeas}`. Site, date and
+   the full numeric title all agree, and the veto still fires on the eight-token
+   descriptive tail. Every genuine release from such a studio is lost. (The
+   scene anchor and a shortened release are in the corpus; this descriptive-tail
+   release deliberately is not — see below.) The same shape costs an unbracketed
+   filler pair (`Mommy Swallows Bonus Scene 1080p`) too.
+2. *A release crediting a performer the fingerprint omits.* `Xev Bellringer &
+   Jane Doe - Mommy Swallows 1080p` vetoes on `{jane, doe}`. This one is
+   per-release and studio-independent, so it is plausibly the most common of the
+   three — an uncredited co-performer is a data-completeness problem in the
+   scene record, not a naming convention you can screen for.
+3. *A bare-integer format marker.* `_RESIDUAL_IGNORE` admits no bare numbers, by
+   the same decision that keeps digits in `identity_tokens`, so a VR projection
+   tail vetoes: `FuckPassVR - Ponytail Leverage - River Lynn 180 LR 8K` fires on
+   `{180}`. The parenthesised form of the same release matches, which makes this
+   the narrowest of the three and the one most likely to look like a fluke in
+   the wild.
 
 This is a real loss, not a theoretical one, and it is **not softened by a retry**:
 `api.py`'s RSS path calls the same `score()`, so RSS vetoes identically. There is
@@ -270,13 +290,16 @@ missing. It also reaches the import-completer, where the all-or-nothing pack rul
 means one descriptively-named file blocks an entire pack. The only place the loss
 is visible is the `/ui` trace, which names the residual tokens.
 
-It is accepted rather than fixed because the fix — scoping the residual to the
-segment the matched title lives in — is unvalidated and would loosen the veto back
-toward the false grabs it exists to stop. Deliberately no corpus row asserts
-`no_match` for these two shapes: they *are* the right scene, and pinning them would
-ratchet a known-wrong verdict in as correct. Mitigated by the `/ui` trace and the
-planned override; revisit with segment scoping when there is evidence to validate
-it against.
+It is accepted rather than fixed because the candidate fix — scoping the residual
+to the segment the matched title lives in — is unvalidated and would loosen the
+veto back toward the false grabs it exists to stop. Note it addresses only the
+first instance; the uncredited co-performer is a gap in the scene record rather
+than in the matcher, and the bare-integer marker is a deliberate consequence of
+keeping digits significant. Deliberately no corpus row asserts `no_match` for any
+of these shapes: they *are* the right scene, and pinning them would ratchet a
+known-wrong verdict in as correct. Mitigated by the `/ui` trace and the planned
+override; revisit with segment scoping when there is evidence to validate it
+against.
 
 **Two brackets that do meet, on one path that does not exist yet.** Part A brackets
 the *outgoing* title to Whisparr; Part B treats brackets in *incoming* tracker
