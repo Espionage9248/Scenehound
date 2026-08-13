@@ -141,12 +141,19 @@ import-completer uses — Settings → Connect → Webhook, URL
 Scenehound hears about grabs. Without it, the outcome ladder stops at
 Matched/Failure.
 
-Everything is held in memory (bounded, most recent ~50 searches) and resets on
-restart. Configuration:
+The history is a bounded ring of the most recent ~50 searches, kept in memory and
+mirrored to `/config/ui-sessions.json` so it survives a restart. That file holds
+what the UI shows — scene titles, performer names, release titles, and match
+reasoning; it never holds URLs or API keys. A hard `docker kill` loses at most
+the last 10 seconds of searches; a clean stop loses none. Set
+`SCENEHOUND_UI_PERSIST=false` to keep the history in memory only — useful for a
+read-only `/config`, or if you'd rather nothing landed on disk. Deleting the file
+while Scenehound is stopped clears the history. Configuration:
 
 | Env var | Default | Meaning |
 |---|---|---|
 | `SCENEHOUND_UI_ENABLED` | `true` | Serve the UI and record sessions |
+| `SCENEHOUND_UI_PERSIST` | `true` | Keep the history across restarts in `/config/ui-sessions.json` |
 | `SCENEHOUND_UI_MAX_SESSIONS` | `50` | Ring buffer of recent searches |
 | `SCENEHOUND_UI_MAX_CANDIDATES` | `200` | Max stored candidates per search |
 

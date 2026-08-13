@@ -29,4 +29,7 @@ services:
       # reasons, and grab/import outcomes at http://<host>:9797/ui
       # - SCENEHOUND_UI_ENABLED=false
       # - SCENEHOUND_UI_MAX_SESSIONS=50
+      # The UI history survives restarts in /config/ui-sessions.json. Set false
+      # to keep it in memory only (read-only /config, or nothing on disk).
+      # - SCENEHOUND_UI_PERSIST=false
     restart: unless-stopped

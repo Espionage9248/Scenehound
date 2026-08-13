@@ -25,6 +25,12 @@ from scenehound.wanted_index import WantedIndex
 
 log = logging.getLogger("scenehound")
 REFRESH_INTERVAL_SECONDS = 900.0
+# How often the UI's session ring is flushed to disk. A hard `docker kill`
+# loses at most this much history; a clean stop loses none (lifespan flushes on
+# the way out). Deliberately coarse: a search burst would otherwise rewrite a
+# multi-MB file dozens of times a minute.
+UI_FLUSH_INTERVAL_SECONDS = 10.0
+UI_STATE_FILENAME = "ui-sessions.json"
 
 
 def configure_logging(level: str) -> None:
@@ -48,6 +54,18 @@ async def refresh_loop(
         except Exception as exc:
             log.error("index refresh failed (keeping previous index): %s", exc)
         await asyncio.sleep(interval_seconds)
+
+
+async def persist_loop(
+    store: SessionStore,
+    path: Path,
+    interval_seconds: float = UI_FLUSH_INTERVAL_SECONDS,
+) -> None:
+    # save() no-ops unless something changed and cannot raise, so an idle
+    # instance or an unwritable /config costs one shielded call per tick.
+    while True:
+        await asyncio.sleep(interval_seconds)
+        store.save(path)
 
 
 def create_app(config_dir: Path | None = None) -> FastAPI:
@@ -85,6 +103,10 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         if config.ui.enabled
         else None
     )
+    ui_state_path = config_dir / UI_STATE_FILENAME
+    persist_ui = store is not None and config.ui.persist
+    if persist_ui:
+        store.load(ui_state_path)
     state = AppState(
         config=config,
         prowlarr=None,  # type: ignore[arg-type]  # set in lifespan with a live client
@@ -119,6 +141,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                     config.import_completer.dry_run, config.import_completer.multipack,
                 )
             task = asyncio.create_task(refresh_loop(state, whisparr))
+            persist_task = (
+                asyncio.create_task(persist_loop(state.store, ui_state_path))
+                if persist_ui
+                else None
+            )
             log.info(
                 "scenehound started indexers=%s threshold=%d ui=%s",
                 [i.slug for i in config.indexers], config.matching.threshold,
@@ -134,6 +161,13 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                     completer_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await completer_task
+                if persist_task is not None:
+                    persist_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await persist_task
+                    # Final flush: a clean stop keeps the sessions recorded
+                    # since the last tick.
+                    state.store.save(ui_state_path)
 
     app = FastAPI(lifespan=lifespan)
     app.include_router(router)
