@@ -1,6 +1,6 @@
 from datetime import date
 
-from scenehound.dates import extract_dates, parse_query_term
+from scenehound.dates import extract_dates, parse_query_term, date_spans
 
 
 def test_parse_query_term_unambiguous_day():
@@ -67,3 +67,25 @@ def test_primary_wins_dedup_across_tokens():
     ds = extract_dates("Site.2026-07-05.and.05-07-26.Clip")
     assert date(2026, 7, 5) in ds.primary
     assert date(2026, 7, 5) not in ds.secondary
+
+
+def test_date_spans_locates_each_supported_format():
+    for text, want in [
+        ("ThatFetishGirl.26.07.07.Latex.Worship.XXX.1080p", "26.07.07"),
+        ("Scott Stark Studios - Beach Day 05.07.2026 1080p", "05.07.2026"),
+        ("Studio 2026-07-07 Some Scene", "2026-07-07"),
+    ]:
+        spans = date_spans(text)
+        assert any(text[a:b] == want for a, b in spans), f"{want!r} not found in {spans}"
+
+
+def test_date_spans_empty_when_no_date_present():
+    assert date_spans("Xev Bellringer - Mommy Swallows 2") == []
+    assert date_spans("Case No. 2658794") == []
+
+
+def test_date_spans_does_not_swallow_a_long_identity_number():
+    text = "ShopLyfter - 18.07.25 - Case No. 2658794 - 1080p"
+    covered = {text[a:b] for a, b in date_spans(text)}
+    assert "18.07.25" in covered
+    assert not any("2658794" in c for c in covered)

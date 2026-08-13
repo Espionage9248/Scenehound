@@ -77,16 +77,59 @@ Presence detection is boundary-aware to prevent spurious strong signals:
   "beach days" rates 76.2 on shared letters alone, whereas the real question
   ("shady" vs the substituted "days" = 44.4) separates cleanly from a tracker
   typo ("shady" vs "shadey" = 90.9).
+- Superset-title veto: `title` goes strong on CONTAINMENT — every scene token
+  present in the candidate — which says nothing about what the candidate brought
+  of its own. "Mommy Swallows" is a substring of "Mommy Swallows Before School",
+  "Pregnant Mommy Swallows" and "Stripper Step-Mommy Swallows"; all three are
+  different scenes of the same studio, all scored 100, and the strong `title`
+  additionally EXEMPTED them from the foreign-title veto (2026-08-09 Xev
+  Bellringer false grab: 9 of 10 returned releases were the wrong scene). Any
+  identity token the candidate carries that no signal explains vetoes the match.
+  Explained = junk, scene title, a squashed run of a site/alias/performer name,
+  inside a parsed date span (already scored as the date signal — counting it as
+  title vocabulary scores one fact twice), inside a [bracketed], {braced} or
+  (parenthesised) segment, a residual-only technical token (_RESIDUAL_IGNORE:
+  format words too narrow to widen JUNK_TOKENS for), or the single token
+  trailing the last junk one (a -GROUP tag). That trailer arm is bounded to ONE
+  token because junk is not confined to the tail:
+  "com" is junk, so a "[BralessForever.com]" prefix is, and "4k"/"hd" routinely
+  open release names. Forgiving everything downstream of the last junk token
+  therefore exempted entire titles — "XevBellringer.com - Pregnant Mommy
+  Swallows" scored 100 on an empty residual, which is the very grab this veto
+  exists to kill. The bar is 1: on the corpus every genuine match leaves zero
+  residual, so any residual at all is evidence of a different scene. The
+  residual tokens are returned on MatchScore.residual as the evidence a
+  veto-override would name. A bar that low makes the explainer set the whole
+  design, and its first calibration was too narrow — it was drawn from one
+  studio in one punctuation style and silently dropped true matches carrying a
+  parenthesised or unlisted-format tail. Widening it is the recall-restoring
+  direction and is done ONLY in ways that cannot un-veto a superset title (see
+  _RESIDUAL_IGNORE). What is knowingly still lost is any release carrying real
+  vocabulary the scene record does not know about — not one studio's habit, so
+  do not read the examples as the bound. Three measured instances: a studio
+  whose Whisparr title is not the release's descriptive one (ShopLyfter's
+  "Case No. NNNNNNN" vetoes on the descriptive tail); a release crediting a
+  performer the fingerprint omits ("Xev Bellringer & Jane Doe - Mommy Swallows"
+  vetoes on {jane, doe}), which is per-release and studio-independent; and a
+  bare-integer format marker, since _RESIDUAL_IGNORE admits no bare numbers
+  ("... River Lynn 180 LR 8K" vetoes on {180}, though the parenthesised form
+  matches). Segment-scoping the residual would fix the first and is deferred as
+  unvalidated — it risks loosening the veto back toward the grabs above. The
+  loss is invisible in Whisparr (api.py's RSS path scores identically, so there
+  is no second chance) and visible only in /ui.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
-from scenehound.dates import extract_dates
+from scenehound.dates import date_spans, extract_dates
 from scenehound.models import SceneFingerprint
-from scenehound.normalize import content_tokens, identity_tokens, squash, tokenize
+from scenehound.normalize import (
+    JUNK_TOKENS, content_tokens, identity_tokens, name_ngrams, squash, tokenize,
+)
 
 STRONG_DATE = 40
 STRONG_SITE = 35
@@ -116,6 +159,50 @@ _MIN_TITLE_STRONG_TOKENS = 2  # title needs >= this many content tokens to be a 
 _MAX_SITE_TOKENS = 6          # longest contiguous token run considered a site n-gram;
 #                               wanted_index._MAX_NAME_TOKENS must stay >= this or the
 #                               RSS pre-filter stops being a lossless superset.
+_TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
+# Uploader/studio/technical tags, in all three punctuation styles trackers
+# actually use. Parentheses were missing from the first cut and nine corpus rows
+# use them — "(Oculus 8K, UHD)", "(2026.07.21)", "(720p)" — so a genuine release
+# whose tail happened to be round-bracketed was vetoed where the identical
+# square-bracketed one matched. The character classes are deliberately not
+# paired: a release name is not a grammar, and trackers mix openers and closers
+# often enough that pairing would cost more true matches than it buys. Be clear
+# which way that cuts — it is the LOOSER direction, not the stricter one. An
+# unclosed "[" pairs with the next ")" and the span swallows whatever sits
+# between: "Mommy Swallows [Bonus Scene 1080p) extra words here" explains away
+# "bonus scene". Acceptable only because the veto's bar is 1 and forgiving a
+# tagged span can lose a false-positive catch, never invent one.
+_TAGGED_SEGMENT_RE = re.compile(r"[\[\{\(][^\]\}\)]*[\]\}\)]")
+
+# Format/technical vocabulary consumed ONLY by _unexplained_residual.
+#
+# This is deliberately NOT merged into JUNK_TOKENS, and that separation is the
+# entire point. JUNK_TOKENS also feeds identity_tokens and content_tokens, so
+# widening it moves near_exact, the title ratio, and both foreign-title arms —
+# every verdict in the file. A residual-only set can only ever forgive a token
+# the superset veto was about to fire on, so it cannot change any existing
+# verdict; it can only restore a true match the veto's bar of 1 was dropping.
+# Keep it that way: if a token belongs in identity scoring too, it belongs in
+# JUNK_TOKENS and needs corpus evidence for the wider blast radius.
+#
+# Membership rule: a word that is never a scene's own vocabulary — HDR/codec/
+# container/language/VR-projection markers. No bare integers. identity_tokens
+# keeps bare numbers on purpose (the 2026-07-19 ShopLyfter false grab: digit-
+# stripping collapsed every "Case No. N" to the same boilerplate), and
+# "Mommy Swallows 2" is a motivating false positive whose whole residual is
+# "2" — re-junking any bare number here would chip at that decision from the
+# other side. Alphanumeric markers ("8k", "10bit") are not bare integers.
+#
+# Note the asymmetry before you "tidy" it: "4k" is in JUNK_TOKENS, so it is junk
+# everywhere, while 5k/6k/8k are residual-only and still count as identity and
+# content tokens in every other arm. That is not an oversight — promoting them
+# to JUNK_TOKENS moves near_exact and the foreign-title verdicts, which needs
+# corpus evidence this set deliberately does not require.
+_RESIDUAL_IGNORE = frozenset({
+    "hdr", "hdr10", "dv", "10bit", "bluray", "bdrip", "ddp", "eac3", "opus",
+    "vp9", "amzn", "sub", "subs", "eng", "multi", "oculus",
+    "5k", "6k", "8k", "lr", "sbs",
+})
 
 
 @dataclass(frozen=True)
@@ -124,6 +211,11 @@ class MatchScore:
     strong_signals: tuple[str, ...]
     veto: str | None
     detail: dict[str, float]
+    # The candidate's identity tokens that no signal explains. Populated only by
+    # the superset-title veto; it is the evidence a future veto-override needs to
+    # name what it is overriding ("vetoed on: pregnant"). Defaulted so existing
+    # four-argument constructions stay valid.
+    residual: tuple[str, ...] = ()
 
 
 def _title_ngrams(title: str) -> frozenset[str]:
@@ -169,6 +261,57 @@ def _performer_present(performer: str, ngrams: frozenset[str]) -> bool:
     if len(p_toks) == 1 and len(p_toks[0]) < _MIN_PERFORMER_TOKEN_LEN:
         return False
     return squash(performer) in ngrams
+
+
+def _unexplained_residual(scene: SceneFingerprint, title: str) -> tuple[str, ...]:
+    """The candidate's identity tokens that no signal accounts for.
+
+    A token is explained when it is junk, part of the scene title, part of a
+    site/alias/performer name (in any squashed run — "Jane.ONeil"), inside a
+    span extract_dates matched (already scored as the date signal), inside a
+    [bracketed], {braced} or (parenthesised) segment (uploader/studio/technical
+    tags, never title words), a residual-only technical token (_RESIDUAL_IGNORE
+    — the format words JUNK_TOKENS cannot safely absorb), or is the lone token
+    trailing the last junk one (a release-group tag: "...XXX.1080p.MP4-GRP").
+
+    Anything left is the candidate's OWN title vocabulary. That last arm is
+    bounded to a single trailing token on purpose. Junk is not confined to the
+    tail — JUNK_TOKENS carries "com" precisely because trackers brand the studio
+    with its domain ("[BralessForever.com] ..."), and "4k"/"hd"/"1080p" open
+    plenty of release names — so forgiving *everything* after the last junk
+    token lets one "com" at index 1 exempt the candidate's entire title:
+    "XevBellringer.com - Pregnant Mommy Swallows" scored 100 with an empty
+    residual, the exact false grab this veto exists to kill. One trailing token
+    is the -GROUP tag and nothing else. Forgiveness is not the safe direction
+    here; it is the direction in which a false import gets through, and
+    unpicking one of those is expensive.
+
+    The counterweight, learned after the first cut shipped: at a bar of 1 a
+    single unrecognised format word ("...XXX.2160p.HDR.MP4-KTR") is fatal to a
+    release that is unambiguously the right scene, and the loss is silent —
+    vetoed candidates never reach Whisparr and the RSS path scores identically,
+    so there is no second chance and nothing to see from inside Whisparr. The
+    two arms that answer that (parentheses, _RESIDUAL_IGNORE) are both chosen so
+    they cannot forgive a word a studio could name a scene with."""
+    explained = set(name_ngrams((scene.site, *scene.site_aliases, *scene.performers)))
+    explained |= set(identity_tokens(scene.title))
+    dates = date_spans(title)
+    tags = [m.span() for m in _TAGGED_SEGMENT_RE.finditer(title)]
+    toks = [(m.group().lower(), m.span()) for m in _TOKEN_RE.finditer(title)]
+    last_junk = max((i for i, (t, _) in enumerate(toks) if t in JUNK_TOKENS), default=-1)
+    trailer = last_junk >= 0 and (len(toks) - 1 - last_junk) <= 1
+    out: list[str] = []
+    for i, (tok, (a, b)) in enumerate(toks):
+        if tok in JUNK_TOKENS or tok in _RESIDUAL_IGNORE or tok in explained:
+            continue
+        if any(s <= a and b <= e for s, e in dates):
+            continue
+        if any(s <= a and b <= e for s, e in tags):
+            continue
+        if trailer and i > last_junk:
+            continue
+        out.append(tok)
+    return tuple(out)
 
 
 def score(
@@ -254,6 +397,21 @@ def score(
         if date_secondary:
             veto_detail["date_secondary_reading"] = 1.0
         return MatchScore(0, (), "date-mismatch", veto_detail)
+
+    # --- superset-title veto ---
+    # `title` became strong by CONTAINMENT: every scene token is present in the
+    # candidate. That says nothing about what else the candidate brought. A
+    # candidate carrying the whole scene title plus vocabulary of its own names a
+    # longer-titled scene of the same studio ("Mommy Swallows" vs "Mommy Swallows
+    # Before School": same site, same performer, both score 100). The foreign-title
+    # veto below cannot catch this — it needs `title` absent from the strong set,
+    # and its sibling arm measures words the candidate DROPPED, which here is none
+    # (coverage 1.0). Demotion does not work either: 35 + 35 + 25 = 95, still over
+    # threshold. Placed after the date veto so a contradicting date keeps
+    # precedence and existing corpus rows keep their veto strings.
+    if "title" in strong and (residual := _unexplained_residual(scene, title)):
+        detail["superset_residual"] = float(len(residual))
+        return MatchScore(0, tuple(strong), "superset-title", detail, residual)
 
     # --- foreign-title veto ---
     # A title-less strong set (any pair or triple of site/date/performer, no

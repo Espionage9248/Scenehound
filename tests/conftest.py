@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from scenehound.api import AppState, IndexHolder, router
 from scenehound.clients.prowlarr import ProwlarrClient
 from scenehound.config import (
-    Config, IndexerConfig, MatchingConfig, RateLimitConfig, ServiceConfig,
+    Config, IndexerConfig, MatchingConfig, NamingConfig, RateLimitConfig,
+    ServiceConfig,
 )
 from scenehound.models import SceneFingerprint
 from scenehound.rate_limiter import TokenBucket
@@ -49,6 +50,7 @@ def make_config(**overrides) -> Config:
         api_key="shk",
         matching=MatchingConfig(),
         rate_limit=RateLimitConfig(),
+        naming=NamingConfig(),
         log_level="debug",
     )
     base.update(overrides)
@@ -106,8 +108,14 @@ def app_with_store(prowlarr_calls, store):
 @pytest.fixture
 def make_app(prowlarr_calls):
     """Builder for tests that need non-default apps (no index / error feeds)."""
-    def _make(store=None, with_index=True, status=200, matching=None, feed=FEED_MATCHING):
-        config = make_config(matching=matching) if matching is not None else None
+    def _make(store=None, with_index=True, status=200, matching=None,
+              naming=None, feed=FEED_MATCHING):
+        overrides = {}
+        if matching is not None:
+            overrides["matching"] = matching
+        if naming is not None:
+            overrides["naming"] = naming
+        config = make_config(**overrides) if overrides else None
         return build_app(prowlarr_calls, store=store, with_index=with_index,
                          status=status, config=config, feed=feed)
     return _make

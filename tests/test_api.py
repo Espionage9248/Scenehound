@@ -8,6 +8,12 @@ def titles(response):
     return [c.title for c in parse_feed(response.content)]
 
 
+REWRITTEN = (
+    "That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"
+    " [TFG.26.07.07.Latex.Worship.Session.1080p]"
+)
+
+
 def test_wrong_apikey_rejected(client):
     r = client.get("/indexer/empornium/api", params={"t": "caps", "apikey": "bad"})
     assert ET.fromstring(r.content).get("code") == "100"
@@ -30,7 +36,7 @@ def test_search_mode_returns_only_rewritten_match(client, prowlarr_calls):
                 "cat": "6000", "apikey": "shk"},
     )
     got = titles(r)
-    assert got == ["That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"]
+    assert got == [REWRITTEN]
     assert prowlarr_calls  # went to prowlarr
     assert prowlarr_calls[0]["apikey"] == "pk"
 
@@ -97,7 +103,7 @@ def test_rss_mode_rewrites_matches_and_passes_rest(client, prowlarr_calls):
         "/indexer/empornium/api", params={"t": "search", "apikey": "shk"}
     )
     got = titles(r)
-    assert "That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p" in got
+    assert REWRITTEN in got
     assert "Unrelated.Studio.Thing.720p" in got
     assert "q" not in prowlarr_calls[0]
 
@@ -158,8 +164,15 @@ def test_rss_mode_rewrites_to_best_scene_not_first(app):
     r = TestClient(app).get(
         "/indexer/empornium/api", params={"t": "search", "apikey": "shk"}
     )
+    # This test's feed title spells the site out and dates it in full
+    # ("ThatFetishGirl.2026-07-07...") where FEED_MATCHING uses the alias and a
+    # yy.mm.dd stamp ("TFG.26.07.07..."). Both are dotted; the site token and
+    # date form are what differ. So the bracketed suffix differs from REWRITTEN's
+    # too — it is the tracker's own title, verbatim, not a normalized one. Do not
+    # collapse this assertion into the shared REWRITTEN constant.
     assert titles(r) == [
         "That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"
+        " [ThatFetishGirl.2026-07-07.Latex.Worship.Session.1080p]"
     ]
 
 
@@ -366,3 +379,48 @@ def test_search_respects_configured_date_skew(make_app):
     strict = TestClient(make_app(
         matching=MatchingConfig(date_skew_days=1), feed=FEED_SKEWED))
     assert titles(strict.get("/indexer/empornium/api", params=params)) == []
+
+
+def test_feed_title_matches_the_recorded_title(app_with_store, store):
+    # The recorder's rewritten_title is what observe.record_grab correlates
+    # incoming grab webhooks against. If the feed and the recorder disagree,
+    # grab tracking silently stops working.
+    from fastapi.testclient import TestClient
+
+    r = TestClient(app_with_store).get(
+        "/indexer/empornium/api",
+        params={"t": "search", "q": "thatfetishgirl 07.07.2026",
+                "cat": "6000", "apikey": "shk"},
+    )
+    feed_title = titles(r)[0]
+    recorded = [c for c in store.snapshot()["sessions"][0]["candidates"] if c["matched"]]
+    assert recorded[0]["rewritten_title"] == feed_title
+
+
+def test_original_title_attr_survives_the_suffix(client):
+    from scenehound.torznab import ORIGINAL_TITLE_ATTR
+
+    r = client.get(
+        "/indexer/empornium/api",
+        params={"t": "search", "q": "thatfetishgirl 07.07.2026",
+                "cat": "6000", "apikey": "shk"},
+    )
+    root = ET.fromstring(r.content)
+    attrs = root.findall(
+        ".//channel/item/{http://torznab.com/schemas/2015/feed}attr")
+    values = {a.get("name"): a.get("value") for a in attrs}
+    assert values[ORIGINAL_TITLE_ATTR] == "TFG.26.07.07.Latex.Worship.Session.1080p"
+
+
+def test_suffix_can_be_switched_off(make_app):
+    from fastapi.testclient import TestClient
+
+    from scenehound.config import NamingConfig
+
+    app = make_app(naming=NamingConfig(original_title_suffix=False))
+    r = TestClient(app).get(
+        "/indexer/empornium/api",
+        params={"t": "search", "q": "thatfetishgirl 07.07.2026",
+                "cat": "6000", "apikey": "shk"},
+    )
+    assert titles(r) == ["That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"]

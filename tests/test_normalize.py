@@ -1,6 +1,7 @@
 from scenehound.normalize import (
     content_tokens,
     identity_tokens,
+    name_ngrams,
     squash,
     tokenize,
     xxx_site_variant,
@@ -79,3 +80,24 @@ def test_xxx_site_variant_guards_degenerate_names():
     assert xxx_site_variant("") is None
     assert xxx_site_variant("   ") is None
     assert xxx_site_variant("Maxxx") is None   # stem "Ma" is too short to alias safely
+
+
+def test_name_ngrams_covers_punctuation_glued_by_the_release():
+    grams = name_ngrams(["Jane O'Neil"])
+    assert {"jane", "o", "neil", "janeo", "oneil", "janeoneil"} <= grams
+
+
+def test_name_ngrams_covers_hyphenated_names():
+    grams = name_ngrams(["Mary-Jane Smith"])
+    assert {"maryjane", "maryjanesmith", "jane", "smith"} <= grams
+
+
+def test_name_ngrams_merges_multiple_names():
+    grams = name_ngrams(["Xev Bellringer", "XevBellringer"])
+    assert "xevbellringer" in grams
+    assert "xev" in grams and "bellringer" in grams
+
+
+def test_name_ngrams_of_nothing_is_empty():
+    assert name_ngrams([]) == frozenset()
+    assert name_ngrams([""]) == frozenset()

@@ -59,3 +59,32 @@ def test_rewrite_without_quality():
 def test_rewrite_sanitizes_weird_chars():
     scene = SceneFingerprint(2, "Site!", (), date(2026, 1, 2), "What?! A #Title", ())
     assert rewrite_title(scene, "x") == "Site.2026-01-02.What.A.Title.XXX"
+
+
+def test_rewrite_appends_the_original_verbatim():
+    out = rewrite_title(SCENE, "messy jane doe 07/07/26 [1080] x264", include_original=True)
+    assert out == (
+        "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX.1080p.x264"
+        " [messy jane doe 07/07/26 [1080] x264]"
+    )
+
+
+def test_rewrite_original_suffix_is_opt_in():
+    plain = rewrite_title(SCENE, "messy jane doe [1080]")
+    assert plain == "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX.1080p"
+    assert "[" not in plain.split("XXX")[1]
+
+
+def test_rewrite_appends_original_even_without_quality_tokens():
+    out = rewrite_title(SCENE, "Jane Doe - Some Great Scene", include_original=True)
+    assert out == (
+        "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX"
+        " [Jane Doe - Some Great Scene]"
+    )
+
+
+def test_rewrite_does_not_escape_brackets_in_the_original():
+    # Nesting is cosmetic; Whisparr's parser ignores everything after the
+    # quality token, so the payload is passed through untouched.
+    out = rewrite_title(SCENE, "[Studio] Scene [1080]", include_original=True)
+    assert out.endswith(" [[Studio] Scene [1080]]")

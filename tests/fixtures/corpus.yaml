@@ -230,6 +230,23 @@
   scene: *river_lynn
   expect: match
 
+# The same release judged against the scene it ACTUALLY is. Post-review recall
+# repair: the superset veto's first explainer set knew [brackets] and {braces}
+# but not (parens), so this release — site, date, performer and title all exactly
+# right — died on residual (oculus, 8k), both of them inside the round-bracketed
+# technical tail. Nine rows of this corpus use parens; they are as much a tracker
+# convention as the other two, and a veto that reads punctuation style as evidence
+# of a wrong scene is reading noise. VR studios in particular put the whole
+# headset/projection tail in parens.
+- release: "FuckPassVR - Ponytail Leverage - River Lynn (2026.07.21) (Oculus 8K, UHD)"
+  scene:
+    site: "FuckPassVR"
+    aliases: []
+    date: 2026-07-21
+    title: "Ponytail Leverage"
+    performers: ["River Lynn"]
+  expect: match
+
 # --- 2026-08-06 production false grab #2 (RSS): sibling scene, same studio + couple ---
 # No date anywhere in the release, so {site, performer} carried it alone — and on a
 # studio's own feed with a recurring pair that discriminates nothing (35 + 50 with the
@@ -256,3 +273,88 @@
 - release: "[BralessForever.com] Emma G & Rocky - Beach - 4k"
   scene: *shady_beach
   expect: match
+
+# 2026-08-09 Xev Bellringer false grab. The wanted scene "Mommy Swallows" is a
+# substring of seven longer-titled scenes from the same studio. Containment alone
+# made `title` a STRONG signal, which in turn exempted every one of them from the
+# foreign-title veto — all scored 100 and were returned to Whisparr. A candidate
+# carrying the whole scene title PLUS identity tokens no signal explains names a
+# longer-titled scene, not this one.
+- release: "Xev Bellringer - Mommy Swallows (.mp4)"     # the one real match
+  scene: &mommy
+    site: "Xev Bellringer"
+    aliases: ["XevBellringer"]
+    date: 2015-01-06
+    title: "Mommy Swallows"
+    performers: ["Xev Bellringer"]
+  expect: match
+
+- release: "[XevUnleashed] Xev Bellringer - Mommy Swallows - 4K 2160p"  # bracketed uploader tag
+  scene: *mommy
+  expect: match
+
+- release: "Xev Bellringer - Mommy Swallows [Bonus Scene] 1080p"        # bracketed filler
+  scene: *mommy
+  expect: match
+
+- release: "[XevUnleashed] Xev Bellringer - Pregnant Mommy Swallows - 4K 2160p"
+  scene: *mommy
+  expect: no_match
+
+- release: "[Clips4Sale] Pregnant Mommy Swallows [Xev Bellringer] (720p)"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Pregnant Mommy Swallows (1080p)"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Mommy Swallows 2"          # a bare number IS the identity
+  scene: *mommy
+  expect: no_match
+
+- release: "Stripper Step-Mommy Swallows Xev Bellringer"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Mommy Swallows Before Your Date (720p)"
+  scene: *mommy
+  expect: no_match
+
+- release: "Xev Bellringer - Mommy Swallows Before School (.mp4)"
+  scene: *mommy
+  expect: no_match
+
+# --- post-review recall repairs to the same veto (2026-08-09 review) ---
+# The bar of 1 means one unrecognised word is fatal, and the first explainer set
+# was calibrated on the ten rows above: one studio, one punctuation style. These
+# two are releases of the wanted scene that the veto was dropping, and dropping
+# SILENTLY — a vetoed candidate is never returned, api.py's RSS path scores with
+# the same score(), so there is no second chance and nothing to see from inside
+# Whisparr. They belong here so the explainer set cannot narrow back.
+
+# A standard dotted scene-release carrying a format word JUNK_TOKENS does not
+# list. "ktr" is forgiven as the -GROUP trailer, but "hdr" sat one token upstream
+# of it and vetoed a release that agrees on site, date, performer and title.
+# Held by _RESIDUAL_IGNORE, which is separate from JUNK_TOKENS on purpose: junk
+# also feeds identity_tokens, so widening it would move near_exact and both
+# foreign-title arms rather than only this veto.
+- release: "XevBellringer.15.01.06.Mommy.Swallows.XXX.2160p.HDR.MP4-KTR"
+  scene: *mommy
+  expect: match
+
+# The parenthesised twin of the "[XevUnleashed] … - 4K 2160p" control above. Same
+# uploader, same legitimate release, round brackets instead of square — and that
+# alone was the difference between 100 and a veto on residual (xevunleashed).
+- release: "Xev Bellringer - Mommy Swallows (XevUnleashed) 1080p"
+  scene: *mommy
+  expect: match
+
+# NOT here, deliberately: "ShopLyfter - 18.07.25 - Case No. 2658794 - Sakura Lin,
+# the Rich Girl vs Two Cocks - 1080p {Se7enSeas}" and "Xev Bellringer - Mommy
+# Swallows Bonus Scene 1080p". Both ARE the wanted scene and both are still
+# vetoed, on the release's own descriptive tail. Asserting no_match for them
+# would ratchet a verdict we know to be wrong in as if it were correct; the fix
+# (scoping the residual to the segment the title lives in) is unvalidated and
+# risks loosening the veto back toward the grabs above, so the loss is recorded
+# in the spec's Consequences instead of pinned here.

@@ -102,3 +102,13 @@ def extract_dates(text: str) -> ExtractedDates:
             if d := _valid(_expand_two_digit_year(y2), mo, dy):
                 sec.add(d)
     return ExtractedDates(frozenset(prim), frozenset(sec - prim))
+
+
+def date_spans(text: str) -> list[tuple[int, int]]:
+    """Character spans of every date-shaped run extract_dates considers.
+
+    Spans may overlap and are not sorted; callers only ask whether a token
+    falls inside one. The matcher uses this to tell a digit already explained
+    by the date signal from one that is part of the candidate's own title:
+    counting "26.07.07" as foreign title words scores one fact twice."""
+    return [m.span() for rx in (_YMD4, _XY4, _TRIPLE2) for m in rx.finditer(text)]

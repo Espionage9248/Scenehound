@@ -27,6 +27,12 @@ _UNMATCHED_GRABS_MAX = 20
 # release names, never URLs, and are stored verbatim so grab correlation can
 # exact-match them.
 _SECRET_PARAM = re.compile(r"(?i)\b(apikey|api_key|passkey|token)=[^&\s]+")
+# The separator rewriter.rewrite_title puts before the original tracker title:
+# "<canonical> [<original>]". Duplicated here rather than imported to keep this
+# module's no-imports-from-the-pipeline isolation rule; if the rewriter's
+# separator ever changes, correlation quietly falls back to exact matching,
+# which is where it started.
+_ORIGINAL_SUFFIX_SEP = " ["
 
 
 def _sanitize(text: str) -> str:
@@ -78,6 +84,11 @@ class CandidateTrace:
     detail: dict[str, float]
     matched: bool
     rewritten_title: str | None      # what we returned to Whisparr, if matched
+    # Identity tokens the matcher could not explain; populated for the
+    # superset-title veto only. The UI names them so an over-firing veto is
+    # visible — vetoed candidates never reach Whisparr, so /ui is the only
+    # place a wrongly-rejected release can be seen.
+    residual: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -175,6 +186,31 @@ class SessionStore:
         return Recorder(self, slug, threshold, raw_query)
 
     @staticmethod
+    def _correlates(c: "CandidateTrace", release_title: str) -> bool:
+        """Does this stored candidate correspond to the webhook's release title?
+
+        Exact match on either side of the rewrite, plus the canonical PREFIX of
+        the rewritten title. The prefix arm is a hedge, not a feature. Part A
+        made `rewritten_title` "<canonical> [<original tracker title>]", and the
+        parse contract behind that was verified against `GET /api/v3/parse` —
+        not against the On Grab webhook, which is what actually feeds this
+        method, and which CI cannot exercise. If Whisparr ever reports a title
+        it re-derived rather than the one it was handed, exact equality stops
+        correlating and the UI's ladder stalls at Matched with nothing logged as
+        an error anywhere: silence is the failure mode. There is already one
+        open "RSS grab not marked" investigation in this repo that a second
+        silent correlation break would confuse badly.
+
+        Accepting the prefix is free: it is a string this very session emitted
+        pre-suffix, so it cannot correlate anything the bare canonical title did
+        not already correlate before Part A existed.
+        """
+        if release_title in (c.title, c.rewritten_title):
+            return True
+        rw = c.rewritten_title
+        return bool(rw) and rw.split(_ORIGINAL_SUFFIX_SEP, 1)[0] == release_title
+
+    @staticmethod
     def _correlate_guid(matches, size: int | None) -> str | None:
         if len(matches) == 1:
             return matches[0].guid
@@ -192,8 +228,7 @@ class SessionStore:
         ev = GrabEvent(release_title, download_id, time.time(), size)
         for s in self._sessions:  # deque is newest-first already
             matches = [c for c in s.candidates
-                       if release_title and (c.rewritten_title == release_title
-                                             or c.title == release_title)]
+                       if release_title and self._correlates(c, release_title)]
             if not matches:
                 continue
             guid = self._correlate_guid(matches, size)
@@ -329,6 +364,7 @@ class Recorder:
                 detail=dict(ms.detail),
                 matched=ms.confidence >= self._threshold,
                 rewritten_title=rewritten,
+                residual=ms.residual,
             ))
 
     @_shielded

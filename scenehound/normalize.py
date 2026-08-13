@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from typing import Iterable
 
 # Tokens that carry no identity information: containers, codecs, sources,
 # resolutions, domain suffixes, and scene-release filler. Lowercase. Only whole
@@ -75,3 +76,22 @@ def identity_tokens(s: str) -> list[str]:
     boilerplate (2026-07-19 ShopLyfter false grab). Junk (resolutions, codecs)
     is still removed — those numbers never identify content."""
     return [t for t in tokenize(s) if t not in JUNK_TOKENS]
+
+
+def name_ngrams(names: Iterable[str]) -> frozenset[str]:
+    """Every squashed contiguous run of each name's own tokens.
+
+    The mirror of matcher._title_ngrams, applied to the name side. "Jane
+    O'Neil" yields {jane, o, neil, janeo, oneil, janeoneil}, so a release
+    spelling it "Jane.ONeil" leaves no token the scene cannot explain. No
+    edit-distance fallback: matching names by edit distance fabricates strong
+    signals from coincidental near-spellings (see matcher._site_in_title)."""
+    out: set[str] = set()
+    for name in names:
+        toks = tokenize(name)
+        for i in range(len(toks)):
+            acc = ""
+            for j in range(i, len(toks)):
+                acc += toks[j]
+                out.add(acc)
+    return frozenset(out)

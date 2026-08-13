@@ -645,3 +645,96 @@ def test_secondary_rescue_with_two_strong_signals_still_forgiven():
     assert s.veto is None
     assert s.detail["date_secondary_reading"] == 1.0
     assert s.confidence < 75  # capped: no title corroboration, date not strong
+
+
+from scenehound.matcher import _unexplained_residual
+
+MOMMY = SceneFingerprint(
+    scene_id=4622,
+    site="Xev Bellringer",
+    site_aliases=("XevBellringer",),
+    date=date(2015, 1, 6),
+    title="Mommy Swallows",
+    performers=("Xev Bellringer",),
+)
+
+
+def test_superset_title_vetoes_a_longer_titled_scene():
+    s = score(MOMMY, "Xev Bellringer - Mommy Swallows Before School (.mp4)")
+    assert s.veto == "superset-title"
+    assert s.confidence == 0
+    assert s.residual == ("before", "school")
+
+
+def test_superset_title_keeps_the_exact_scene():
+    s = score(MOMMY, "Xev Bellringer - Mommy Swallows (.mp4)")
+    assert s.veto is None
+    assert s.confidence >= 75
+    assert s.residual == ()
+
+
+def test_superset_residual_counts_a_bare_number():
+    # "Mommy Swallows 2" is a different scene; identity_tokens keeps the digit.
+    assert _unexplained_residual(MOMMY, "Xev Bellringer - Mommy Swallows 2") == ("2",)
+
+
+def test_superset_residual_explains_junk_and_scene_title():
+    assert _unexplained_residual(MOMMY, "Xev Bellringer - Mommy Swallows 1080p x264") == ()
+
+
+def test_superset_residual_explains_a_bracketed_uploader_tag():
+    assert _unexplained_residual(
+        MOMMY, "[XevUnleashed] Xev Bellringer - Mommy Swallows - 4K 2160p") == ()
+    assert _unexplained_residual(
+        MOMMY, "Xev Bellringer - Mommy Swallows {Se7enSeas}") == ()
+
+
+def test_superset_residual_explains_date_digits():
+    scene = SceneFingerprint(1, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                             "Latex Worship Session", ("Jane Doe",))
+    assert _unexplained_residual(
+        scene, "ThatFetishGirl.26.07.07.Latex.Worship.Session.XXX.1080p.MP4-GRP") == ()
+
+
+def test_superset_residual_explains_a_punctuation_variant_of_a_performer():
+    scene = SceneFingerprint(1, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                             "Latex Worship Session", ("Jane O'Neil",))
+    assert _unexplained_residual(scene, "Jane.ONeil.Latex.Worship.Session.720p") == ()
+
+
+def test_superset_residual_explains_only_a_one_token_release_group_trailer():
+    # Both directions of the trailer explainer, because the bound is the whole
+    # point of it. Forwards: a genuine -GROUP tag trailing the last junk token
+    # is explained.
+    assert _unexplained_residual(MOMMY, "Xev Bellringer - Mommy Swallows 1080p.MP4-GRP") == ()
+    # Backwards: junk is not confined to the tail. "com" is junk (trackers brand
+    # the studio with its domain), and "4k"/"hd"/"1080p" open release names, so
+    # forgiving everything after the LAST junk token anywhere in the string let
+    # one token at index 1 exempt the candidate's entire title.
+    for leak in (
+        "[XevBellringer.com] Pregnant Mommy Swallows",
+        "XevBellringer.com - Pregnant Mommy Swallows",
+        "4K Xev Bellringer - Pregnant Mommy Swallows",
+        "Xev Bellringer - HD - Pregnant Mommy Swallows",
+    ):
+        assert _unexplained_residual(MOMMY, leak) == ("pregnant",), leak
+    assert _unexplained_residual(
+        MOMMY, "[1080p] Xev Bellringer - Mommy Swallows Before School") == ("before", "school")
+    # …and the consequence that actually matters: these are vetoed, not returned
+    # to Whisparr at confidence 100.
+    s = score(MOMMY, "XevBellringer.com - Pregnant Mommy Swallows")
+    assert s.veto == "superset-title"
+    assert s.confidence == 0
+
+
+def test_superset_veto_does_not_fire_without_a_title_signal():
+    # Title is not strong here (no site/performer), so the arm must not engage.
+    scene = SceneFingerprint(1, "Some Studio", (), date(2026, 7, 7),
+                             "Mommy Swallows", ())
+    s = score(scene, "Darlingjosefin - Mommy Swallows Sperm (720p)")
+    assert s.veto != "superset-title"
+
+
+def test_date_mismatch_keeps_precedence_over_superset_title():
+    s = score(MOMMY, "Xev Bellringer - Mommy Swallows Before School 2020-03-04")
+    assert s.veto == "date-mismatch"

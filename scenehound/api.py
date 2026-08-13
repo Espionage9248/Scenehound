@@ -105,6 +105,7 @@ async def _search_mode(
 
     threshold = state.config.matching.threshold
     skew = state.config.matching.date_skew_days
+    suffix = state.config.naming.original_title_suffix
     bucket = state.buckets[indexer.slug]
     best: dict[str, _Scored] = {}
     variants = plan_queries(scenes[0], state.config.matching.max_queries_per_search)
@@ -145,7 +146,8 @@ async def _search_mode(
     )
     rec.scored([
         (v.candidate, v.scene, v.score,
-         rewrite_title(v.scene, v.candidate.title) if v.confidence >= threshold else None)
+         rewrite_title(v.scene, v.candidate.title, include_original=suffix)
+         if v.confidence >= threshold else None)
         for v in best.values()
     ])
     log.info(
@@ -153,7 +155,9 @@ async def _search_mode(
         indexer.slug, q, [s.scene_id for s in scenes], fired, len(best), len(matched),
     )
     return _xml(build_feed([
-        FeedEntry(v.candidate, title_override=rewrite_title(v.scene, v.candidate.title))
+        FeedEntry(v.candidate,
+                  title_override=rewrite_title(v.scene, v.candidate.title,
+                                               include_original=suffix))
         for v in matched
     ]))
 
@@ -165,6 +169,7 @@ async def _rss_mode(
     candidates = await state.prowlarr.search(indexer.prowlarr_id, None, cats)
     index = state.index_holder.current
     skew = state.config.matching.date_skew_days
+    suffix = state.config.naming.original_title_suffix
     entries: list[FeedEntry] = []
     rewritten = 0
     rss_matched: list[tuple] = []
@@ -184,7 +189,7 @@ async def _rss_mode(
                     best_ms = s
                     best_scene = scene
             if best_scene is not None and best_ms is not None:
-                new_title = rewrite_title(best_scene, c.title)
+                new_title = rewrite_title(best_scene, c.title, include_original=suffix)
                 entry = FeedEntry(c, title_override=new_title)
                 rewritten += 1
                 rss_matched.append((c, best_scene, best_ms, new_title))
