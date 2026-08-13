@@ -207,3 +207,20 @@ def test_naming_reads_yaml_and_env(tmp_path):
     cfg = load_config(tmp_path, {"SCENEHOUND_API_KEY": "k",
                                  "SCENEHOUND_ORIGINAL_TITLE_SUFFIX": "true"})
     assert cfg.naming.original_title_suffix is True
+
+
+def test_ui_persist_defaults_on(tmp_path):
+    cfg = load_config(write_config(tmp_path), env={})
+    assert cfg.ui.persist is True
+
+
+def test_ui_persist_from_yaml(tmp_path):
+    text = MINIMAL_YAML + "\nui:\n  persist: false\n"
+    cfg = load_config(write_config(tmp_path, text), env={})
+    assert cfg.ui.persist is False
+
+
+def test_ui_persist_env_overrides_yaml_true(tmp_path):
+    text = MINIMAL_YAML + "\nui:\n  persist: true\n"
+    cfg = load_config(write_config(tmp_path, text), env={"SCENEHOUND_UI_PERSIST": "0"})
+    assert cfg.ui.persist is False

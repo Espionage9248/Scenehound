@@ -155,3 +155,75 @@ async def test_completer_gets_the_store(tmp_path, monkeypatch):
         completer = app.state.import_completer
         assert completer._store is app.state.scenehound.store
         assert completer._store is not None
+
+
+# ---- UI state persistence ---------------------------------------------------
+
+STORED_STATE = {
+    "next_id": 4,
+    # Deliberately sparse: a real file carries every field, but startup must
+    # cope with one written by a different build of the schema.
+    "sessions": [{"session_id": 4, "slug": "empornium", "kind": "search",
+                  "raw_query": "That Fetish Girl 07.07.2026"}],
+    "unmatched_grabs": [],
+}
+
+
+def _write_state(tmp_path):
+    import json
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    (tmp_path / "ui-sessions.json").write_text(json.dumps(STORED_STATE))
+
+
+def test_stored_sessions_are_restored_at_startup(tmp_path):
+    _write_state(tmp_path)
+    app = create_app(config_dir=tmp_path)
+    sessions = app.state.scenehound.store.snapshot()["sessions"]
+    assert [s["session_id"] for s in sessions] == [4]
+    assert sessions[0]["slug"] == "empornium"
+
+
+def test_stored_sessions_ignored_when_persist_is_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCENEHOUND_UI_PERSIST", "false")
+    _write_state(tmp_path)
+    app = create_app(config_dir=tmp_path)
+    assert app.state.scenehound.store.snapshot()["sessions"] == []
+
+
+async def test_persist_loop_writes_the_state_file(tmp_path):
+    from scenehound.app import persist_loop
+    from scenehound.observe import SessionStore
+
+    store = SessionStore(max_sessions=5, max_candidates=10)
+    store.record_grab("Some Release", "HASH1")
+    path = tmp_path / "ui-sessions.json"
+
+    task = asyncio.create_task(persist_loop(store, path, interval_seconds=0.01))
+    for _ in range(100):
+        if path.exists():
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    assert path.exists()
+
+
+def test_shutdown_flushes_the_state_file(tmp_path):
+    # A clean stop must not lose the sessions since the last flush tick.
+    from fastapi.testclient import TestClient
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    app = create_app(config_dir=tmp_path)
+    with TestClient(app):
+        app.state.scenehound.store.record_grab("Late Release", "HASH2")
+    import json
+    data = json.loads((tmp_path / "ui-sessions.json").read_text())
+    assert data["unmatched_grabs"][0]["grab"]["release_title"] == "Late Release"
+
+
+def test_no_state_file_written_when_persist_is_off(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("SCENEHOUND_UI_PERSIST", "false")
+    (tmp_path / "config.yaml").write_text(CONFIG_YAML)
+    app = create_app(config_dir=tmp_path)
+    with TestClient(app):
+        app.state.scenehound.store.record_grab("Late Release", "HASH2")
+    assert not (tmp_path / "ui-sessions.json").exists()

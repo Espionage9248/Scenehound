@@ -51,6 +51,11 @@ class UiConfig:
     enabled: bool = True
     max_sessions: int = 50
     max_candidates: int = 200
+    # Keep the session ring in <config_dir>/ui-sessions.json so a restart does
+    # not wipe the UI. Off means the history is process-local again — the
+    # escape hatch for a read-only /config, or for not wanting scene titles and
+    # performer names sitting on disk.
+    persist: bool = True
 
 
 @dataclass(frozen=True)
@@ -132,6 +137,7 @@ def _ui(raw: dict, env: Mapping[str, str]) -> UiConfig:
         max_candidates=int(
             env.get("SCENEHOUND_UI_MAX_CANDIDATES", u.get("max_candidates", d.max_candidates))
         ),
+        persist=_env_bool(env, "SCENEHOUND_UI_PERSIST", bool(u.get("persist", d.persist))),
     )
 
 

@@ -517,3 +517,174 @@ def test_snapshot_carries_the_superset_residual(store=None):
     c = store.snapshot()["sessions"][0]["candidates"][0]
     assert c["veto"] == "superset-title"
     assert c["residual"] == ["before", "school"]
+
+
+# ---- persistence across restarts -------------------------------------------
+# The store is still a process-local ring; save()/load() only let that ring
+# survive a container restart. Both are shielded: a corrupt, truncated, or
+# unwritable state file degrades to an empty UI, never to a failed startup.
+
+
+def _restore(path, max_sessions=10) -> SessionStore:
+    store = SessionStore(max_sessions=max_sessions, max_candidates=200)
+    store.load(path)
+    return store
+
+
+def test_save_then_load_round_trips_the_snapshot(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate()],
+                           status="matched", matched_count=1))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    assert _restore(path).snapshot() == store.snapshot()
+
+
+def test_load_restores_grab_and_import_stamps(tmp_path):
+    store = _store_with_matched_session()
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    store.record_import("HASH1", movie_id=7, file_count=2, dry_run=True)
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    g = _restore(path).snapshot()["sessions"][0]["outcome"]["grabs"][0]
+    assert g["grab"]["download_id"] == "HASH1"
+    assert g["grabbed_guid"] == "g1"
+    assert g["imported"]["movie_id"] == 7
+    assert g["imported"]["file_count"] == 2
+    assert g["imported"]["dry_run"] is True
+
+
+def test_load_restores_unmatched_grabs(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.record_grab("Something We Never Searched For", "HASH9", 500)
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    u = _restore(path).snapshot()["unmatched_grabs"][0]
+    assert u["grab"]["release_title"] == "Something We Never Searched For"
+    assert u["grab"]["download_id"] == "HASH9"
+
+
+def test_next_id_resumes_above_the_restored_sessions(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    for _ in range(3):
+        store.add(make_session(store))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    # Reusing ids 1-3 would make two different sessions share one id in the UI.
+    assert _restore(path).next_id() == 4
+
+
+def test_load_of_a_missing_file_leaves_an_empty_store(tmp_path):
+    store = _restore(tmp_path / "never-written.json")
+    assert store.snapshot() == {"sessions": [], "unmatched_grabs": []}
+    assert store.next_id() == 1
+
+
+def test_load_of_a_corrupt_file_leaves_an_empty_store(tmp_path, caplog):
+    path = tmp_path / "ui-sessions.json"
+    path.write_text('{"sessions": [{"slug": "trunc')  # killed mid-write
+    with caplog.at_level("ERROR"):
+        store = _restore(path)
+    assert store.snapshot()["sessions"] == []
+    assert "observe" in caplog.text
+
+
+def test_load_skips_a_structurally_broken_session_and_keeps_the_rest(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, slug="good-one"))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+    data = json.loads(path.read_text())
+    data["sessions"].insert(0, {"session_id": 99, "candidates": "not-a-list"})
+    path.write_text(json.dumps(data))
+
+    assert [s["slug"] for s in _restore(path).snapshot()["sessions"]] == ["good-one"]
+
+
+def test_load_tolerates_unknown_and_missing_candidate_fields(tmp_path):
+    # Schema drift both ways: `residual` postdates v0.2.0, and a file written by
+    # a newer build may carry fields this one has never heard of.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate()]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+    data = json.loads(path.read_text())
+    cand = data["sessions"][0]["candidates"][0]
+    del cand["residual"]
+    cand["field_from_the_future"] = "???"
+    path.write_text(json.dumps(data))
+
+    c = _restore(path).snapshot()["sessions"][0]["candidates"][0]
+    assert c["title"] == "TFG.26.07.07.X.1080p"
+    assert c["residual"] == []
+    assert "field_from_the_future" not in c
+
+
+def test_load_keeps_only_the_newest_when_max_sessions_shrank(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    for _ in range(5):
+        store.add(make_session(store))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path, max_sessions=2)
+    assert [s["session_id"] for s in restored.snapshot()["sessions"]] == [5, 4]
+
+
+def test_save_skips_the_write_when_nothing_changed(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+    path.unlink()
+
+    store.save(path)  # flush tick with no new sessions: must not rewrite
+    assert not path.exists()
+
+    store.add(make_session(store))
+    store.save(path)
+    assert path.exists()
+
+
+def test_a_grab_marks_the_store_dirty_again(tmp_path):
+    store = _store_with_matched_session()
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+    path.unlink()
+
+    store.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    store.save(path)
+    assert json.loads(path.read_text())["sessions"][0]["outcome"]["grabs"]
+
+
+def test_save_leaves_no_temp_file_behind(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store))
+    store.save(tmp_path / "ui-sessions.json")
+    assert [p.name for p in tmp_path.iterdir()] == ["ui-sessions.json"]
+
+
+def test_save_to_an_unwritable_path_never_raises(tmp_path, caplog):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store))
+    with caplog.at_level("ERROR"):
+        store.save(tmp_path / "no-such-dir" / "ui-sessions.json")
+    assert "observe" in caplog.text
+
+
+def test_a_grab_after_a_restart_still_correlates(tmp_path):
+    # Restored sessions are real SearchSessions, not inert dicts, so a webhook
+    # that lands after the restart still finds its session.
+    store = _store_with_matched_session()
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    restored.record_grab("That Fetish Girl 2026-07-07 Latex 1080p", "HASH1", 1000)
+    snap = restored.snapshot()
+    assert snap["sessions"][0]["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH1"
+    assert snap["unmatched_grabs"] == []

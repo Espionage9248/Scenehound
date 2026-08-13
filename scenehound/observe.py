@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import json
 import logging
+import os
 import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from scenehound.models import SceneFingerprint
 
@@ -161,14 +164,102 @@ class SearchSession:
     notes: tuple[str, ...]
 
 
+# ---- decoding the state file ------------------------------------------------
+# snapshot() already emits exactly the shape written to disk, so only the way
+# back needs code. Every field is read with a default: a state file written by
+# an older or newer build must still load, minus whatever it didn't carry. A
+# session whose shape is broken outright (wrong types, not just missing keys)
+# raises here and is dropped individually by load().
+
+
+def _scene_ref(d: dict) -> SceneRef:
+    return SceneRef(
+        scene_id=d.get("scene_id", 0), site=d.get("site", ""),
+        date=d.get("date", ""), title=d.get("title", ""),
+        performers=tuple(d.get("performers") or ()),
+    )
+
+
+def _variant(d: dict) -> VariantTrace:
+    return VariantTrace(query=d.get("query", ""), fired=bool(d.get("fired")),
+                        result_count=d.get("result_count"))
+
+
+def _candidate(d: dict) -> CandidateTrace:
+    return CandidateTrace(
+        title=d.get("title", ""), guid=d.get("guid", ""),
+        size=d.get("size"), seeders=d.get("seeders"),
+        scene_id=d.get("scene_id", 0), confidence=d.get("confidence", 0),
+        strong_signals=tuple(d.get("strong_signals") or ()),
+        veto=d.get("veto"), detail=dict(d.get("detail") or {}),
+        matched=bool(d.get("matched")), rewritten_title=d.get("rewritten_title"),
+        residual=tuple(d.get("residual") or ()),
+    )
+
+
+def _grab_event(d: dict) -> GrabEvent:
+    return GrabEvent(release_title=d.get("release_title", ""),
+                     download_id=d.get("download_id", ""),
+                     at=d.get("at", 0.0), size=d.get("size"))
+
+
+def _import_event(d: dict | None) -> ImportEvent | None:
+    if not d:
+        return None
+    return ImportEvent(at=d.get("at", 0.0), movie_id=d.get("movie_id", 0),
+                       file_count=d.get("file_count", 0),
+                       dry_run=bool(d.get("dry_run")))
+
+
+def _outcome(d: dict) -> Outcome:
+    return Outcome(
+        status=d.get("status", "empty"), matched_count=d.get("matched_count", 0),
+        items_total=d.get("items_total", 0), rewritten=d.get("rewritten", 0),
+        grabs=[GrabRecord(grab=_grab_event(g.get("grab") or {}),
+                          grabbed_guid=g.get("grabbed_guid"),
+                          imported=_import_event(g.get("imported")))
+               for g in d.get("grabs") or ()],
+    )
+
+
+def _unmatched_grab(d: dict) -> UnmatchedGrab:
+    return UnmatchedGrab(grab=_grab_event(d.get("grab") or {}),
+                         imported=_import_event(d.get("imported")))
+
+
+def _session(d: dict) -> SearchSession:
+    return SearchSession(
+        session_id=d.get("session_id", 0),
+        started_at=d.get("started_at", 0.0), finished_at=d.get("finished_at", 0.0),
+        slug=d.get("slug", ""), kind=d.get("kind", "search"),
+        raw_query=d.get("raw_query", ""), threshold=d.get("threshold", 0),
+        parsed_site=d.get("parsed_site"),
+        parsed_dates=tuple(d.get("parsed_dates") or ()),
+        scenes=tuple(_scene_ref(s) for s in d.get("scenes") or ()),
+        variants=tuple(_variant(v) for v in d.get("variants") or ()),
+        candidates=tuple(_candidate(c) for c in d.get("candidates") or ()),
+        dropped_candidates=d.get("dropped_candidates", 0),
+        outcome=_outcome(d.get("outcome") or {}),
+        fallback_reason=d.get("fallback_reason"),
+        notes=tuple(d.get("notes") or ()),
+    )
+
+
 class SessionStore:
-    """Bounded, process-local ring of recent sessions. Newest first."""
+    """Bounded, process-local ring of recent sessions. Newest first.
+
+    save()/load() let that ring survive a restart; they do not change what it
+    is. Both are shielded like everything else here: a corrupt, truncated, or
+    unwritable state file must degrade to an empty UI, never to a failed
+    startup or a failed search.
+    """
 
     def __init__(self, max_sessions: int, max_candidates: int) -> None:
         self._sessions: deque = deque(maxlen=max_sessions)
         self._unmatched_grabs: deque = deque(maxlen=_UNMATCHED_GRABS_MAX)
         self._next = 0
         self._max_candidates = max_candidates
+        self._dirty = False
 
     @property
     def max_candidates(self) -> int:
@@ -180,7 +271,55 @@ class SessionStore:
 
     @_shielded
     def add(self, session: SearchSession) -> None:
+        self._dirty = True
         self._sessions.appendleft(session)
+
+    @_shielded
+    def save(self, path: Path) -> None:
+        """Write the ring to `path`, atomically, only if something changed."""
+        if not self._dirty:
+            return
+        tmp = Path(path).with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"next_id": self._next, **self.snapshot()}, fh)
+            # Without the flush+fsync, os.replace can publish a file whose
+            # contents never reached the disk — on a host power cut that is
+            # exactly the empty file the atomic rename was meant to prevent.
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        self._dirty = False
+
+    @_shielded
+    def load(self, path: Path) -> None:
+        """Refill the ring from `path`. Absent or unreadable file: stay empty."""
+        p = Path(path)
+        if not p.exists():
+            return
+        data = json.loads(p.read_text(encoding="utf-8"))
+        sessions = []
+        for d in data.get("sessions") or ():
+            try:
+                sessions.append(_session(d))
+            except Exception:
+                log.exception("observe: dropped an undecodable stored session")
+        grabs = []
+        for d in data.get("unmatched_grabs") or ():
+            try:
+                grabs.append(_unmatched_grab(d))
+            except Exception:
+                log.exception("observe: dropped an undecodable stored grab")
+        # Stored newest-first, so a shrunken max_sessions must cut the TAIL;
+        # deque(maxlen=) fills from the left and would keep the oldest instead.
+        cap = self._sessions.maxlen
+        self._sessions = deque(sessions[:cap], maxlen=cap)
+        self._unmatched_grabs = deque(grabs[:_UNMATCHED_GRABS_MAX],
+                                      maxlen=_UNMATCHED_GRABS_MAX)
+        # Never reissue an id a restored session already carries.
+        self._next = max([data.get("next_id") or 0] + [s.session_id for s in sessions])
+        self._dirty = False
+        log.info("ui state restored sessions=%d unmatched_grabs=%d from %s",
+                 len(self._sessions), len(self._unmatched_grabs), p)
 
     def recorder(self, slug: str, threshold: int, raw_query: str) -> "Recorder":
         return Recorder(self, slug, threshold, raw_query)
@@ -225,6 +364,7 @@ class SessionStore:
     @_shielded
     def record_grab(self, release_title: str, download_id: str,
                     size: int | None = None) -> None:
+        self._dirty = True
         ev = GrabEvent(release_title, download_id, time.time(), size)
         for s in self._sessions:  # deque is newest-first already
             matches = [c for c in s.candidates
@@ -253,6 +393,7 @@ class SessionStore:
     @_shielded
     def record_import(self, download_id: str, movie_id: int,
                       file_count: int, dry_run: bool) -> None:
+        self._dirty = True
         ev = ImportEvent(time.time(), movie_id, file_count, dry_run)
         if download_id:  # an id-less import can't be correlated to anything
             for s in self._sessions:
