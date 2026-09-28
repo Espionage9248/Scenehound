@@ -44,11 +44,24 @@ def _dotify(text: str) -> str:
     return _SANITIZE.sub(".", text).strip(".")
 
 
+def _squash(text: str) -> str:
+    return _SANITIZE.sub("", text)
+
+
 def rewrite_title(
     scene: SceneFingerprint, original_title: str, *, include_original: bool = False
 ) -> str:
     """The canonical name Whisparr parses, optionally followed by the tracker's
     own title in square brackets.
+
+    The studio is squashed into one token ("FamilyTherapyXXX"), the way
+    trackers write it. Dotted, Whisparr's parser drops a standalone XXX word
+    from a studio such as "Family Therapy XXX", reads "Family Therapy", maps
+    the release to no scene and rejects it as "Unknown Movie" — Automated
+    Search and RSS could never grab those, only a forced Interactive grab.
+    Verified against GET /api/v3/parse over all 6562 wanted scenes of a live
+    library (2026-09-28): squashing fixed 471 of the 473 affected scenes and
+    still mapped every one of the 6060 the dotted form already mapped.
 
     The suffix is verbatim — not scrubbed, not truncated. Verified against
     Whisparr's own GET /api/v3/parse (2026-08-09): studio, releaseDate, quality
@@ -60,7 +73,7 @@ def rewrite_title(
     Defaults to off so the pure function keeps its historical contract; the
     service passes the config value explicitly at every call site."""
     parts = [
-        _dotify(scene.site),
+        _squash(scene.site),
         scene.date.isoformat(),
         _dotify(scene.title),
         "XXX",

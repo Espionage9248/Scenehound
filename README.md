@@ -219,7 +219,7 @@ fell short.
 Wrong grab? The original tracker title is right there in the result Whisparr
 shows you — Scenehound appends it verbatim in square brackets:
 
-    Xev.Bellringer.2015-01-06.Mommy.Swallows.XXX.720p [Xev Bellringer - Mommy Swallows Before Your Date (720p)]
+    XevBellringer.2015-01-06.Mommy.Swallows.XXX.720p [Xev Bellringer - Mommy Swallows Before Your Date (720p)]
 
 Whisparr identifies an adult scene by studio + date and ignores everything after
 the quality token, so the suffix costs nothing and makes an Interactive Search
