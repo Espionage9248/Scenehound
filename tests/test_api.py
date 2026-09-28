@@ -9,7 +9,7 @@ def titles(response):
 
 
 REWRITTEN = (
-    "That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"
+    "ThatFetishGirl.2026-07-07.Latex.Worship.Session.XXX.1080p"
     " [TFG.26.07.07.Latex.Worship.Session.1080p]"
 )
 
@@ -171,7 +171,7 @@ def test_rss_mode_rewrites_to_best_scene_not_first(app):
     # too — it is the tracker's own title, verbatim, not a normalized one. Do not
     # collapse this assertion into the shared REWRITTEN constant.
     assert titles(r) == [
-        "That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"
+        "ThatFetishGirl.2026-07-07.Latex.Worship.Session.XXX.1080p"
         " [ThatFetishGirl.2026-07-07.Latex.Worship.Session.1080p]"
     ]
 
@@ -423,4 +423,4 @@ def test_suffix_can_be_switched_off(make_app):
         params={"t": "search", "q": "thatfetishgirl 07.07.2026",
                 "cat": "6000", "apikey": "shk"},
     )
-    assert titles(r) == ["That.Fetish.Girl.2026-07-07.Latex.Worship.Session.XXX.1080p"]
+    assert titles(r) == ["ThatFetishGirl.2026-07-07.Latex.Worship.Session.XXX.1080p"]

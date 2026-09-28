@@ -48,12 +48,12 @@ def test_marker_bearing_resolutions_still_recognized():
 
 def test_rewrite_full():
     out = rewrite_title(SCENE, "messy jane doe 07/07/26 [1080] x264")
-    assert out == "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX.1080p.x264"
+    assert out == "ThatFetishGirl.2026-07-07.Some.Great.Scene.XXX.1080p.x264"
 
 
 def test_rewrite_without_quality():
     out = rewrite_title(SCENE, "messy jane doe title only")
-    assert out == "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX"
+    assert out == "ThatFetishGirl.2026-07-07.Some.Great.Scene.XXX"
 
 
 def test_rewrite_sanitizes_weird_chars():
@@ -61,24 +61,36 @@ def test_rewrite_sanitizes_weird_chars():
     assert rewrite_title(scene, "x") == "Site.2026-01-02.What.A.Title.XXX"
 
 
+def test_studio_is_squashed_so_a_standalone_xxx_survives_parsing():
+    # Live incident: dotted, this was "Family.Therapy.XXX.2026-07-26.…", and
+    # Whisparr's parser drops a standalone XXX word from the studio, read
+    # "Family Therapy", matched no scene and rejected the release as "Unknown
+    # Movie" — so Automated Search and RSS could never grab it; only a forced
+    # Interactive grab could. Squashed, the studio keeps its XXX and maps.
+    scene = SceneFingerprint(15201, "Family Therapy XXX", (), date(2026, 7, 26),
+                             "Hiding From The Pool Party", ())
+    out = rewrite_title(scene, "[FamilyTherapy] Lana Gee - Hiding From The Pool Party {Se7enSeas}")
+    assert out == "FamilyTherapyXXX.2026-07-26.Hiding.From.The.Pool.Party.XXX"
+
+
 def test_rewrite_appends_the_original_verbatim():
     out = rewrite_title(SCENE, "messy jane doe 07/07/26 [1080] x264", include_original=True)
     assert out == (
-        "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX.1080p.x264"
+        "ThatFetishGirl.2026-07-07.Some.Great.Scene.XXX.1080p.x264"
         " [messy jane doe 07/07/26 [1080] x264]"
     )
 
 
 def test_rewrite_original_suffix_is_opt_in():
     plain = rewrite_title(SCENE, "messy jane doe [1080]")
-    assert plain == "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX.1080p"
+    assert plain == "ThatFetishGirl.2026-07-07.Some.Great.Scene.XXX.1080p"
     assert "[" not in plain.split("XXX")[1]
 
 
 def test_rewrite_appends_original_even_without_quality_tokens():
     out = rewrite_title(SCENE, "Jane Doe - Some Great Scene", include_original=True)
     assert out == (
-        "That.Fetish.Girl.2026-07-07.Some.Great.Scene.XXX"
+        "ThatFetishGirl.2026-07-07.Some.Great.Scene.XXX"
         " [Jane Doe - Some Great Scene]"
     )
 
