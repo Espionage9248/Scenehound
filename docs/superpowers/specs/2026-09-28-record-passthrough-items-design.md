@@ -252,11 +252,12 @@ every live Whisparr indexer goes through Scenehound (`Empornium (Scenehound)`,
   - opens with "Closest wanted scene: *Studio — Title (date)*" from `c.scene`,
     or "No wanted scene shares a date or name with this release" when there is
     none
-  - continues with the existing veto and signal lines
-  - ends with "N < threshold T → not rewritten, passed through unchanged".
-    For a row at or above the threshold (search passthrough only) it ends
-    instead with "N ≥ threshold T → would have matched, but this query path
-    returns results unchanged", in the warning colour.
+  - continues with the existing veto and signal lines. A vetoed row ends on its
+    veto line, as vetoed rows already do.
+  - a row that wasn't vetoed ends with "N < threshold T → not rewritten, passed
+    through unchanged". For a row at or above the threshold (search passthrough
+    only) it ends instead with "N ≥ threshold T → would have matched, but this
+    query path returns results unchanged", in the warning colour.
 
   When the index was missing, the session's fallback text (search) or note
   (RSS) states that nothing was scored. The row's "no wanted scene" line is
