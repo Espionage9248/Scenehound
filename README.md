@@ -129,9 +129,9 @@ Torznab endpoints) that makes each search legible:
   rejected as a longer-titled scene of the same studio, and the UI names the
   words it could not explain. Releases Scenehound returns to Whisparr
   unchanged — RSS items it didn't rewrite, and the results of searches it
-  couldn't parse — are listed in a collapsed **Passed through** block with the
-  closest wanted scene and why it fell short, and are badged there when
-  Whisparr grabs one.
+  passed straight to Prowlarr — are listed in a collapsed **Passed through**
+  block with the closest wanted scene and how it scored, and are badged there
+  when Whisparr grabs one.
 - **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
   Whisparr grabs a result and **Imported** when the import-completer lands it.
 
@@ -148,8 +148,9 @@ Matched/Failure.
 The history is a bounded ring of the most recent ~50 searches, kept in memory and
 mirrored to `/config/ui-sessions.json` so it survives a restart. That file holds
 what the UI shows — scene titles, performer names, release titles, and match
-reasoning — plus each release's tracker link, with API keys, passkeys and
-tracker auth tokens redacted. A hard `docker kill` loses at most
+reasoning — plus each release's tracker link. API keys, passkeys and tracker
+auth tokens passed as URL parameters are redacted, there and in any stored
+error text. A hard `docker kill` loses at most
 the last 10 seconds of searches; a clean stop loses none. Set
 `SCENEHOUND_UI_PERSIST=false` to keep the history in memory only — useful for a
 read-only `/config`, or if you'd rather nothing landed on disk. Deleting the file
