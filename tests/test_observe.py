@@ -688,3 +688,88 @@ def test_a_grab_after_a_restart_still_correlates(tmp_path):
     snap = restored.snapshot()
     assert snap["sessions"][0]["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH1"
     assert snap["unmatched_grabs"] == []
+
+
+# ---- tracker secrets in guids ---------------------------------------------
+# Both live trackers' guids are download URLs carrying authkey= and
+# torrent_pass=. They must never be stored or served.
+
+TRACKER_GUID = ("https://www.happyfappy.net/torrents.php?action=download"
+                "&id=149855&authkey=AUTHKEY123&torrent_pass=PASS456")
+REDACTED_GUID = ("https://www.happyfappy.net/torrents.php?action=download"
+                 "&id=149855&authkey=REDACTED&torrent_pass=REDACTED")
+
+
+def test_recorder_redacts_tracker_authkey_and_torrent_pass():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("happyfappy", 75, "q")
+    rec.scored([(_cand(TRACKER_GUID), SCENE, _ms(90), "rewritten")])
+    rec.commit()
+    snap = store.snapshot()
+    assert snap["sessions"][0]["candidates"][0]["guid"] == REDACTED_GUID
+    assert "AUTHKEY123" not in json.dumps(snap)
+    assert "PASS456" not in json.dumps(snap)
+
+
+def _write_unredacted_state(path):
+    # A v0.6.1 file: add() stores what it's given, so building the session by
+    # hand reproduces the unredacted guid and grabbed_guid an old build wrote.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate(guid=TRACKER_GUID)],
+                           status="matched", matched_count=1))
+    store.record_grab("That Fetish Girl 2026-07-07 X 1080p", "HASH1", 1000)
+    store.save(path)
+    assert "AUTHKEY123" in path.read_text()
+
+
+def test_load_scrubs_tracker_secrets_and_rewrites_the_file(tmp_path):
+    path = tmp_path / "ui-sessions.json"
+    _write_unredacted_state(path)
+
+    restored = _restore(path)
+    s = restored.snapshot()["sessions"][0]
+    assert s["candidates"][0]["guid"] == REDACTED_GUID
+    # Both sides of the correlation key were scrubbed the same way, so the
+    # restored grab still badges its row.
+    assert s["outcome"]["grabs"][0]["grabbed_guid"] == REDACTED_GUID
+
+    restored.save(path)  # the next flush tick
+    text = path.read_text()
+    assert "AUTHKEY123" not in text and "PASS456" not in text
+
+
+def test_load_scrubbed_state_still_correlates_a_new_grab(tmp_path):
+    path = tmp_path / "ui-sessions.json"
+    _write_unredacted_state(path)
+
+    restored = _restore(path)
+    restored.record_grab("That Fetish Girl 2026-07-07 X 1080p", "HASH2", 1000)
+    grabs = restored.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert [g["grabbed_guid"] for g in grabs] == [REDACTED_GUID, REDACTED_GUID]
+    assert restored.snapshot()["unmatched_grabs"] == []
+
+
+def test_load_of_a_clean_file_does_not_rewrite_it(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate()]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    path.unlink()
+    restored.save(path)
+    assert not path.exists()
+
+
+def test_load_of_an_already_scrubbed_file_does_not_rewrite_it(tmp_path):
+    # In raw JSON a secret param's value runs on into the closing quote, so a
+    # naive re-sanitize of the text would flag every redacted file as dirty.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate(guid=REDACTED_GUID)]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    path.unlink()
+    restored.save(path)
+    assert not path.exists()

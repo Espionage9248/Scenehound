@@ -144,7 +144,8 @@ Matched/Failure.
 The history is a bounded ring of the most recent ~50 searches, kept in memory and
 mirrored to `/config/ui-sessions.json` so it survives a restart. That file holds
 what the UI shows — scene titles, performer names, release titles, and match
-reasoning; it never holds URLs or API keys. A hard `docker kill` loses at most
+reasoning — plus each release's tracker link, with API keys, passkeys and
+tracker auth tokens redacted. A hard `docker kill` loses at most
 the last 10 seconds of searches; a clean stop loses none. Set
 `SCENEHOUND_UI_PERSIST=false` to keep the history in memory only — useful for a
 read-only `/config`, or if you'd rather nothing landed on disk. Deleting the file

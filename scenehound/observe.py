@@ -29,7 +29,14 @@ _UNMATCHED_GRABS_MAX = 20
 # apikey-style query params inside GUIDs (which are sometimes URLs). Titles are
 # release names, never URLs, and are stored verbatim so grab correlation can
 # exact-match them.
-_SECRET_PARAM = re.compile(r"(?i)\b(apikey|api_key|passkey|token)=[^&\s]+")
+_SECRET_KEYS = r"apikey|api_key|passkey|token|authkey|torrent_pass"
+# authkey/torrent_pass: Gazelle trackers (empornium, happyfappy) put both in
+# the download URL that Prowlarr hands us as the guid.
+_SECRET_PARAM = re.compile(rf"(?i)\b({_SECRET_KEYS})=[^&\s]+")
+# A secret param whose value isn't REDACTED yet. load() runs this over the raw
+# JSON text, where _SECRET_PARAM's value class would run on past the closing
+# quote and make an already-scrubbed file look dirty on every restart.
+_UNREDACTED = re.compile(rf'(?i)\b(?:{_SECRET_KEYS})=(?!REDACTED\b)[^&\s"]')
 # The separator rewriter.rewrite_title puts before the original tracker title:
 # "<canonical> [<original>]". Duplicated here rather than imported to keep this
 # module's no-imports-from-the-pipeline isolation rule; if the rewriter's
@@ -40,6 +47,10 @@ _ORIGINAL_SUFFIX_SEP = " ["
 
 def _sanitize(text: str) -> str:
     return _SECRET_PARAM.sub(r"\1=REDACTED", text)
+
+
+def _sanitize_opt(text: str | None) -> str | None:
+    return _sanitize(text) if text else text
 
 
 def _shielded(fn):
@@ -187,7 +198,9 @@ def _variant(d: dict) -> VariantTrace:
 
 def _candidate(d: dict) -> CandidateTrace:
     return CandidateTrace(
-        title=d.get("title", ""), guid=d.get("guid", ""),
+        # Re-sanitized on the way in: files written before authkey and
+        # torrent_pass were redacted still carry them.
+        title=d.get("title", ""), guid=_sanitize(d.get("guid") or ""),
         size=d.get("size"), seeders=d.get("seeders"),
         scene_id=d.get("scene_id", 0), confidence=d.get("confidence", 0),
         strong_signals=tuple(d.get("strong_signals") or ()),
@@ -216,7 +229,9 @@ def _outcome(d: dict) -> Outcome:
         status=d.get("status", "empty"), matched_count=d.get("matched_count", 0),
         items_total=d.get("items_total", 0), rewritten=d.get("rewritten", 0),
         grabs=[GrabRecord(grab=_grab_event(g.get("grab") or {}),
-                          grabbed_guid=g.get("grabbed_guid"),
+                          # Scrubbed exactly like the candidate guid it points
+                          # at, so the correlation key still agrees.
+                          grabbed_guid=_sanitize_opt(g.get("grabbed_guid")),
                           imported=_import_event(g.get("imported")))
                for g in d.get("grabs") or ()],
     )
@@ -296,7 +311,8 @@ class SessionStore:
         p = Path(path)
         if not p.exists():
             return
-        data = json.loads(p.read_text(encoding="utf-8"))
+        text = p.read_text(encoding="utf-8")
+        data = json.loads(text)
         sessions = []
         for d in data.get("sessions") or ():
             try:
@@ -317,7 +333,10 @@ class SessionStore:
                                       maxlen=_UNMATCHED_GRABS_MAX)
         # Never reissue an id a restored session already carries.
         self._next = max([data.get("next_id") or 0] + [s.session_id for s in sessions])
-        self._dirty = False
+        # The decoders scrubbed any unredacted secret from memory; flag the
+        # file so the next flush rewrites it too, instead of leaving the
+        # secrets on disk until a search happens to dirty the store.
+        self._dirty = _UNREDACTED.search(text) is not None
         log.info("ui state restored sessions=%d unmatched_grabs=%d from %s",
                  len(self._sessions), len(self._unmatched_grabs), p)
 
