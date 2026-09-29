@@ -148,7 +148,6 @@ function whyLines(c, threshold) {
   const out = [];
   if (c.passed_through) {
     out.push(closestLine(c));
-    if (!c.scene) return out;   // nothing came close, so nothing to explain
   }
   if (c.veto) {
     out.push(`<span class="no">✗ ${esc(VETO_TEXT[c.veto] || "Rejected: " + c.veto)}</span>`);
@@ -266,8 +265,11 @@ function candidates(s) {
   if (!own.length) return s.kind === "search"
     ? `<h3>Candidates</h3><div class="muted">Prowlarr returned nothing for any query variant.</div>` : "";
   const byGuid = grabsByGuid(s);
+  // Only a search session's dropped rows are its own; the cap keeps matched
+  // rows, so an RSS or passthrough session only ever drops passed-through ones.
+  const dropped = s.kind === "search" ? s.dropped_candidates : 0;
   let h = `<h3>Candidates (${own.length}${
-    s.dropped_candidates ? ` shown, +${s.dropped_candidates} more dropped` : ""})</h3>`;
+    dropped ? ` shown, +${dropped} more dropped` : ""})</h3>`;
   h += `<table>${CAND_HEAD}`;
   for (const c of own) h += candidateRow(c, s, byGuid);
   return h + `</table>`;
@@ -275,9 +277,13 @@ function candidates(s) {
 
 function passedThrough(s, open) {
   const rows = s.candidates.filter(c => c.passed_through);
+  // The cap keeps matched rows first, so outside a search session every
+  // dropped row is a passed-through one: count it here, never as "later".
+  const dropped = s.kind === "search" ? 0 : (s.dropped_candidates || 0);
   // Only RSS rows move: an RSS poll takes over the rows it re-lists from the
   // slug's older polls. Pre-feature sessions count 0 and claim nothing.
-  const later = s.kind === "rss" ? Math.max(0, (s.outcome.passed_through || 0) - rows.length) : 0;
+  const later = s.kind === "rss"
+    ? Math.max(0, (s.outcome.passed_through || 0) - rows.length - dropped) : 0;
   if (!rows.length) return later
     ? `<div class="muted pt-line">Passed through unchanged: all ${later} are listed under later polls.</div>` : "";
   const byGuid = grabsByGuid(s);
@@ -295,7 +301,7 @@ function passedThrough(s, open) {
   let h = `<details class="pt" data-key="${key}"${open.has(key) ? " open" : ""}>` +
     `<summary>Passed through — not rewritten (${rows.length})` +
     (later ? ` · ${later} more listed under later polls` : "") +
-    (s.kind !== "rss" && s.dropped_candidates ? ` · +${s.dropped_candidates} more dropped` : "") +
+    (dropped ? ` · +${dropped} more dropped` : "") +
     `${grabbed}</summary><table>${CAND_HEAD}`;
   for (const c of rows) h += candidateRow(c, s, byGuid);
   return h + `</table></details>`;
