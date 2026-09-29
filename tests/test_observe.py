@@ -233,6 +233,7 @@ def test_null_recorder_accepts_everything():
     NULL_RECORDER.note("n")
     NULL_RECORDER.scored([])
     NULL_RECORDER.passthrough_results(0)
+    NULL_RECORDER.passed_through([])
     NULL_RECORDER.rss_summary(0, [])
     NULL_RECORDER.error("e")
     NULL_RECORDER.commit()
@@ -688,3 +689,380 @@ def test_a_grab_after_a_restart_still_correlates(tmp_path):
     snap = restored.snapshot()
     assert snap["sessions"][0]["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH1"
     assert snap["unmatched_grabs"] == []
+
+
+# ---- tracker secrets in guids ---------------------------------------------
+# Both live trackers' guids are download URLs carrying authkey= and
+# torrent_pass=. They must never be stored or served.
+
+TRACKER_GUID = ("https://www.happyfappy.net/torrents.php?action=download"
+                "&id=149855&authkey=AUTHKEY123&torrent_pass=PASS456")
+REDACTED_GUID = ("https://www.happyfappy.net/torrents.php?action=download"
+                 "&id=149855&authkey=REDACTED&torrent_pass=REDACTED")
+
+
+def test_recorder_redacts_tracker_authkey_and_torrent_pass():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("happyfappy", 75, "q")
+    rec.scored([(_cand(TRACKER_GUID), SCENE, _ms(90), "rewritten")])
+    rec.commit()
+    snap = store.snapshot()
+    assert snap["sessions"][0]["candidates"][0]["guid"] == REDACTED_GUID
+    assert "AUTHKEY123" not in json.dumps(snap)
+    assert "PASS456" not in json.dumps(snap)
+
+
+def test_notes_and_errors_are_sanitized():
+    # httpx puts the request URL, apikey included, in its error message; that
+    # text reaches note() and error() verbatim and must not survive into the
+    # stored session.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "q")
+    text = "url 'http://p:9696/12/api?t=search&apikey=SECRETPK&q=x'"
+    rec.note(text)
+    rec.error(text)
+    rec.commit()
+    snap = store.snapshot()
+    assert "SECRETPK" not in json.dumps(snap)
+    notes = snap["sessions"][0]["notes"]
+    assert any("apikey=REDACTED" in n for n in notes)
+
+
+def _write_unredacted_state(path):
+    # A v0.6.1 file: add() stores what it's given, so building the session by
+    # hand reproduces the unredacted guid and grabbed_guid an old build wrote.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate(guid=TRACKER_GUID)],
+                           status="matched", matched_count=1))
+    store.record_grab("That Fetish Girl 2026-07-07 X 1080p", "HASH1", 1000)
+    store.save(path)
+    assert "AUTHKEY123" in path.read_text()
+
+
+def test_load_scrubs_tracker_secrets_and_rewrites_the_file(tmp_path):
+    path = tmp_path / "ui-sessions.json"
+    _write_unredacted_state(path)
+
+    restored = _restore(path)
+    s = restored.snapshot()["sessions"][0]
+    assert s["candidates"][0]["guid"] == REDACTED_GUID
+    # Both sides of the correlation key were scrubbed the same way, so the
+    # restored grab still badges its row.
+    assert s["outcome"]["grabs"][0]["grabbed_guid"] == REDACTED_GUID
+
+    restored.save(path)  # the next flush tick
+    text = path.read_text()
+    assert "AUTHKEY123" not in text and "PASS456" not in text
+
+
+def test_load_scrubbed_state_still_correlates_a_new_grab(tmp_path):
+    path = tmp_path / "ui-sessions.json"
+    _write_unredacted_state(path)
+
+    restored = _restore(path)
+    restored.record_grab("That Fetish Girl 2026-07-07 X 1080p", "HASH2", 1000)
+    grabs = restored.snapshot()["sessions"][0]["outcome"]["grabs"]
+    assert [g["grabbed_guid"] for g in grabs] == [REDACTED_GUID, REDACTED_GUID]
+    assert restored.snapshot()["unmatched_grabs"] == []
+
+
+def test_load_scrubs_secrets_from_stored_notes(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "q")
+    rec.note("placeholder")
+    rec.commit()
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    # A pre-fix file: put the raw, unredacted note back. The store now
+    # sanitizes notes on the way in, so this reproduces what an older build
+    # (before error text was sanitized) left on disk.
+    data = json.loads(path.read_text())
+    data["sessions"][0]["notes"] = [
+        "prowlarr search failed: url 'http://p:9696/12/api?apikey=SECRETPK&q=x'"
+    ]
+    path.write_text(json.dumps(data))
+
+    restored = _restore(path)
+    notes = restored.snapshot()["sessions"][0]["notes"]
+    assert "SECRETPK" not in json.dumps(notes)
+    assert any("apikey=REDACTED" in n for n in notes)
+
+    restored.save(path)
+    assert "SECRETPK" not in path.read_text()
+
+    restored2 = _restore(path)
+    path.unlink()
+    restored2.save(path)
+    assert not path.exists()
+
+
+def test_load_of_a_clean_file_does_not_rewrite_it(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate()]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    path.unlink()
+    restored.save(path)
+    assert not path.exists()
+
+
+def test_load_of_an_already_scrubbed_file_does_not_rewrite_it(tmp_path):
+    # In raw JSON a secret param's value runs on into the closing quote, so a
+    # naive re-sanitize of the text would flag every redacted file as dirty.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate(guid=REDACTED_GUID)]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    path.unlink()
+    restored.save(path)
+    assert not path.exists()
+
+
+# ---- passed-through rows ----------------------------------------------------
+# Items Scenehound returned to Whisparr unchanged. Recorded so a Whisparr grab
+# of one correlates to its session instead of the unmatched strip.
+
+def test_recorder_records_passed_through_rows():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([
+        (_cand("g1", "Raw.Near.Miss"), SCENE, _ms(70, strong=("site", "performer"))),
+        (_cand(TRACKER_GUID, "Raw.Unrelated"), None, None),
+    ])
+    rec.rss_summary(2, [])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    near, unrelated = s["candidates"]          # confidence desc
+    assert near["passed_through"] is True
+    assert near["matched"] is False and near["rewritten_title"] is None
+    assert near["scene_id"] == 7 and near["confidence"] == 70
+    assert near["strong_signals"] == ["site", "performer"]
+    assert near["scene"]["title"] == "Latex Worship Session"
+    assert near["scene"]["date"] == "2026-07-07"
+    assert unrelated["passed_through"] is True
+    assert unrelated["scene_id"] is None and unrelated["scene"] is None
+    assert unrelated["confidence"] == 0 and unrelated["strong_signals"] == []
+    assert unrelated["veto"] is None and unrelated["detail"] == {}
+    assert unrelated["guid"] == REDACTED_GUID
+    assert s["outcome"]["passed_through"] == 2
+
+
+def test_passed_through_row_above_threshold_is_never_matched():
+    # A search passthrough result that WOULD clear the threshold is still
+    # returned unchanged: matched means "Scenehound rewrote it".
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "familytherapyxxx 26.07.26")
+    rec.fallback("unparseable-query")
+    rec.passthrough_results(1)
+    rec.passed_through([(_cand("g1"), SCENE, _ms(100))])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    c = s["candidates"][0]
+    assert c["confidence"] == 100
+    assert c["matched"] is False and c["passed_through"] is True
+    assert s["outcome"]["matched_count"] == 1     # passthrough: results returned
+    assert s["outcome"]["passed_through"] == 1
+
+
+def test_rss_summary_counts_only_rewritten_rows():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("p1", "Raw.1"), None, None),
+                        (_cand("p2", "Raw.2"), None, None)])
+    rec.rss_summary(3, [(_cand("g1"), SCENE, _ms(90), "rewritten")])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["rewritten"] == 1
+    assert s["outcome"]["items_total"] == 3
+    assert s["outcome"]["passed_through"] == 2
+    assert len(s["candidates"]) == 3
+
+
+def test_passed_through_count_includes_rows_the_cap_dropped():
+    # The UI's "listed under later polls" arithmetic relies on this: the count
+    # is taken at capture, before the cap, and dropped rows are reported apart.
+    store = SessionStore(max_sessions=10, max_candidates=1)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand(g, f"Raw.{g}"), None, None) for g in ("a", "b", "c")])
+    rec.rss_summary(3, [])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["passed_through"] == 3
+    assert len(s["candidates"]) == 1 and s["dropped_candidates"] == 2
+
+
+def test_record_grab_correlates_a_passed_through_title():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("p1", "[Bellesa House] - Raw Tracker Title - 2023-06-22"),
+                         None, None)])
+    rec.rss_summary(1, [])
+    rec.commit()
+
+    store.record_grab("[Bellesa House] - Raw Tracker Title - 2023-06-22", "HASH1", 1000)
+    snap = store.snapshot()
+    assert snap["sessions"][0]["outcome"]["grabs"][0]["grabbed_guid"] == "p1"
+    assert snap["unmatched_grabs"] == []
+
+
+def test_duplicate_item_in_one_poll_still_correlates_to_the_session():
+    # Review focus 1: the same release twice in one RSS response. The tie is
+    # ambiguous (same title, same size), so no row badge -- but the grab must
+    # still land on the session, never in the unmatched strip.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("p1", "Raw.Dup"), None, None),
+                        (_cand("p1", "Raw.Dup"), None, None)])
+    rec.rss_summary(2, [])
+    rec.commit()
+
+    store.record_grab("Raw.Dup", "HASH1", 1000)
+    snap = store.snapshot()
+    assert len(snap["sessions"][0]["outcome"]["grabs"]) == 1
+    assert snap["unmatched_grabs"] == []
+
+
+def test_load_decodes_pre_feature_rows_with_defaults(tmp_path):
+    # Review focus 3: a v0.6.1 file has none of the new keys.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate()]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+    data = json.loads(path.read_text())
+    cand = data["sessions"][0]["candidates"][0]
+    for key in ("scene_id", "passed_through", "scene"):
+        del cand[key]
+    del data["sessions"][0]["outcome"]["passed_through"]
+    path.write_text(json.dumps(data))
+
+    s = _restore(path).snapshot()["sessions"][0]
+    c = s["candidates"][0]
+    assert c["scene_id"] is None
+    assert c["passed_through"] is False
+    assert c["scene"] is None
+    assert s["outcome"]["passed_through"] == 0
+
+
+def test_passed_through_rows_round_trip(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("g1", "Raw.Near"), SCENE, _ms(70, strong=("site",))),
+                        (_cand("g2", "Raw.None"), None, None)])
+    rec.rss_summary(2, [])
+    rec.commit()
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    assert _restore(path).snapshot() == store.snapshot()
+
+
+# ---- one row per passed-through RSS item -----------------------------------
+# The same feed items come back on every poll (HappyFappy's 25 span ~87 h).
+# Each passed-through item is listed once, under the latest poll that
+# returned it, so the newest poll per slug always lists the whole feed.
+
+def _rss_poll(store, guids, *, slug="empornium", rewritten=()):
+    rec = store.recorder(slug, 75, "")
+    rec.passed_through([(_cand(g, f"Raw.{g}"), None, None) for g in guids])
+    rec.rss_summary(len(guids) + len(rewritten),
+                    [(_cand(g, f"Rel.{g}"), SCENE, _ms(90), f"Rewritten {g}")
+                     for g in rewritten])
+    rec.commit()
+
+
+def _rows(store):
+    """{session_id: [guid, ...]} in stored order."""
+    return {s["session_id"]: [c["guid"] for c in s["candidates"]]
+            for s in store.snapshot()["sessions"]}
+
+
+def test_rss_poll_moves_relisted_rows_to_the_newest_poll():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b", "c"])
+    _rss_poll(store, ["b", "c", "d"])
+    assert _rows(store) == {2: ["b", "c", "d"], 1: ["a"]}
+    older = store.snapshot()["sessions"][1]
+    assert older["outcome"]["passed_through"] == 3   # capture-time count survives
+
+
+def test_pruning_keeps_a_grabbed_row_through_later_polls():
+    # Review focus 4.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b"])
+    store.record_grab("Raw.a", "HASH1", 1000)        # lands on poll 1
+    _rss_poll(store, ["a", "b"])
+    _rss_poll(store, ["a", "b"])
+    assert _rows(store) == {3: ["a", "b"], 2: [], 1: ["a"]}
+    first = store.snapshot()["sessions"][2]
+    assert first["outcome"]["grabs"][0]["grabbed_guid"] == "a"
+
+    store.record_grab("Raw.a", "HASH2", 1000)        # a second grab: newest poll
+    newest = store.snapshot()["sessions"][0]
+    assert newest["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH2"
+
+
+def test_pruning_never_touches_rewritten_rows():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a"], rewritten=["r"])
+    _rss_poll(store, ["a", "r"])       # r's scene left the wanted list
+    assert _rows(store)[1] == ["r"]
+
+
+def test_pruning_is_per_slug_and_rss_only():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "familytherapyxxx 26.07.26")
+    rec.fallback("unparseable-query")
+    rec.passthrough_results(1)
+    rec.passed_through([(_cand("a", "Raw.a"), None, None)])
+    rec.commit()                                   # 1: search passthrough
+    _rss_poll(store, ["a"], slug="happyfappy")     # 2: other slug
+    _rss_poll(store, ["a"], slug="empornium")      # 3: prunes nothing above
+    assert _rows(store) == {3: ["a"], 2: ["a"], 1: ["a"]}
+
+
+def test_an_empty_guid_never_prunes():
+    # Review focus 5.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, [""])
+    _rss_poll(store, [""])
+    assert _rows(store) == {2: [""], 1: [""]}
+
+
+def test_pruning_carries_the_outcome_by_reference():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b"])
+    store.record_grab("Raw.a", "HASH1", 1000)
+    _rss_poll(store, ["b"])                        # trims poll 1 (drops b)
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
+    first = store.snapshot()["sessions"][1]
+    assert first["outcome"]["grabs"][0]["imported"]["movie_id"] == 7
+
+
+def test_a_pruning_failure_still_keeps_the_new_session(monkeypatch, caplog):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a"])
+
+    def boom(new):
+        raise RuntimeError("prune exploded")
+
+    monkeypatch.setattr(store, "_prune_relisted", boom)
+    _rss_poll(store, ["a"])
+    assert _rows(store) == {2: ["a"], 1: ["a"]}    # duplicates, nothing lost
+    assert "failed (ignored)" in caplog.text
+
+
+def test_restored_sessions_are_pruned_by_the_next_poll(tmp_path):
+    # Review focus 2: a restart between polls.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b"])
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    _rss_poll(restored, ["b"])
+    assert _rows(restored) == {2: ["b"], 1: ["a"]}

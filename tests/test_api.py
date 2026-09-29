@@ -303,8 +303,9 @@ def test_rss_records_summary(app_with_store, store):
     assert s["outcome"]["status"] == "rss-summary"
     assert s["outcome"]["items_total"] == 2
     assert s["outcome"]["rewritten"] == 1
-    assert len(s["candidates"]) == 1
-    assert s["candidates"][0]["rewritten_title"] is not None
+    rewritten = [c for c in s["candidates"] if not c["passed_through"]]
+    assert len(rewritten) == 1
+    assert rewritten[0]["rewritten_title"] is not None
 
 
 def test_prowlarr_error_records_error(make_app, store):
@@ -314,6 +315,13 @@ def test_prowlarr_error_records_error(make_app, store):
     s = store.snapshot()["sessions"][0]
     assert s["outcome"]["status"] == "error"
     assert any("prowlarr" in n.lower() for n in s["notes"])
+
+
+def test_prowlarr_error_never_exposes_the_prowlarr_key(make_app, store):
+    app = make_app(store=store, status=500)
+    r = _get(app, q=SEARCH_Q)
+    assert b"apikey=pk" not in r.content
+    assert "apikey=pk" not in json.dumps(store.snapshot())
 
 
 def test_no_store_means_no_capture_and_identical_bytes(make_app):
@@ -424,3 +432,153 @@ def test_suffix_can_be_switched_off(make_app):
                 "cat": "6000", "apikey": "shk"},
     )
     assert titles(r) == ["ThatFetishGirl.2026-07-07.Latex.Worship.Session.XXX.1080p"]
+
+
+# ---- passed-through items -----------------------------------------------------
+import json
+from datetime import date
+
+import pytest
+
+from scenehound.api import _best_scene
+from scenehound.models import SceneFingerprint
+from scenehound.wanted_index import WantedIndex
+
+# Scores below were computed with the real matcher against conftest's SCENE
+# (That Fetish Girl / TFG, 2026-07-07, "Latex Worship Session", Jane Doe).
+FEED_NEAR_MISS = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <item>
+      <title>TFG.Jane.Doe.Beach.Day.720p</title>
+      <guid>https://tracker.example/torrents.php?action=download&amp;id=42&amp;authkey=AUTHKEY123&amp;torrent_pass=PASS456</guid>
+      <link>http://p/dl/42</link>
+      <torznab:attr name="category" value="6000"/>
+    </item>
+  </channel>
+</rss>"""
+
+
+def test_best_scene_keeps_the_first_scene_on_a_rewrite_tie():
+    # Both clear the threshold at 100; 200 has MORE strong signals. Today's
+    # RSS rule is first-wins on a confidence tie, and must stay so.
+    low = SceneFingerprint(100, "That Fetish Girl", (), date(2026, 7, 7),
+                           "Latex Worship Session", ())
+    high = SceneFingerprint(200, "That Fetish Girl", (), date(2026, 7, 7),
+                            "Latex Worship Session", ("Jane Doe",))
+    scene, ms = _best_scene(WantedIndex([low, high]),
+                            "ThatFetishGirl.2026-07-07.Latex.Worship.Session.[Jane.Doe].1080p",
+                            75, 3)
+    assert (scene.scene_id, ms.confidence) == (100, 100)
+
+
+def test_best_scene_prefers_more_strong_signals_below_threshold():
+    # Both vetoed to 0: 100 is a site-mismatch with only the date agreeing,
+    # 200 a foreign-title with site AND date agreeing -- the nearer miss.
+    other = SceneFingerprint(100, "Other Studio", (), date(2026, 7, 7), "Beach Day", ())
+    tfg = SceneFingerprint(200, "That Fetish Girl", (), date(2026, 7, 7),
+                           "Latex Worship Session", ())
+    scene, ms = _best_scene(WantedIndex([other, tfg]),
+                            "ThatFetishGirl.2026-07-07.Totally.Different.Film.1080p",
+                            75, 3)
+    assert scene.scene_id == 200
+    assert ms.veto == "foreign-title"
+
+
+def test_best_scene_is_none_when_no_wanted_scene_is_a_candidate():
+    scene = SceneFingerprint(7, "That Fetish Girl", ("TFG",), date(2026, 7, 7),
+                             "Latex Worship Session", ("Jane Doe", "Mary Major"))
+    assert _best_scene(WantedIndex([scene]), "Unrelated.Studio.Thing.720p", 75, 3) is None
+
+
+def test_rss_records_passed_through_items(app_with_store, store):
+    _get(app_with_store)
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["rewritten"] == 1
+    assert s["outcome"]["passed_through"] == 1
+    [pt] = [c for c in s["candidates"] if c["passed_through"]]
+    assert pt["title"] == "Unrelated.Studio.Thing.720p"
+    assert pt["scene_id"] is None and pt["scene"] is None
+    assert pt["matched"] is False
+
+
+def test_rss_records_the_closest_scene_below_threshold(make_app, store):
+    _get(make_app(store=store, feed=FEED_NEAR_MISS))
+    s = store.snapshot()["sessions"][0]
+    [pt] = s["candidates"]
+    assert pt["passed_through"] is True
+    assert pt["confidence"] == 70
+    assert set(pt["strong_signals"]) == {"site", "performer"}
+    assert pt["scene_id"] == 7
+    assert pt["scene"]["title"] == "Latex Worship Session"
+    assert "AUTHKEY123" not in json.dumps(s) and "PASS456" not in json.dumps(s)
+
+
+def test_rss_without_index_records_every_item_unscored(make_app, store):
+    _get(make_app(store=store, with_index=False))
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["rewritten"] == 0
+    assert s["outcome"]["passed_through"] == 2
+    assert all(c["passed_through"] and c["scene_id"] is None for c in s["candidates"])
+    assert "wanted list not loaded — items passed through unscored" in s["notes"]
+
+
+def test_unparseable_passthrough_records_scored_results(app_with_store, store):
+    r = _get(app_with_store, q="just some words")
+    # The response is Prowlarr's, verbatim.
+    assert set(titles(r)) == {"TFG.26.07.07.Latex.Worship.Session.1080p",
+                              "Unrelated.Studio.Thing.720p"}
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["matched_count"] == 2
+    assert s["outcome"]["passed_through"] == 2
+    hit = next(c for c in s["candidates"]
+               if c["title"] == "TFG.26.07.07.Latex.Worship.Session.1080p")
+    assert hit["confidence"] == 100                    # would have matched...
+    assert hit["matched"] is False                     # ...but went back unchanged
+    assert hit["passed_through"] is True and hit["scene_id"] == 7
+
+
+def test_no_index_passthrough_records_unscored_results(make_app, store):
+    _get(make_app(store=store, with_index=False), q=SEARCH_Q)
+    s = store.snapshot()["sessions"][0]
+    assert s["fallback_reason"] == "no-index"
+    assert len(s["candidates"]) == 2
+    assert all(c["scene_id"] is None and c["confidence"] == 0 for c in s["candidates"])
+
+
+def test_passthrough_scores_nothing_without_a_store(make_app, monkeypatch):
+    calls = []
+    monkeypatch.setattr("scenehound.api._best_scene",
+                        lambda *a, **k: calls.append(a) or None)
+    _get(make_app(), q="just some words")
+    assert calls == []
+
+
+def test_passthrough_scoring_failure_still_returns_the_feed(app_with_store, store,
+                                                            monkeypatch, caplog):
+    def boom(*a, **k):
+        raise RuntimeError("scoring exploded")
+
+    monkeypatch.setattr("scenehound.api._best_scene", boom)
+    r = _get(app_with_store, q="just some words")
+    assert len(titles(r)) == 2
+    s = store.snapshot()["sessions"][0]
+    assert s["candidates"] == []
+    assert s["outcome"]["matched_count"] == 2
+    assert "passthrough scoring for the UI failed" in caplog.text
+
+
+@pytest.mark.parametrize("q,with_index", [
+    (None, True),                          # RSS
+    (None, False),                         # RSS, no index
+    ("just some words", True),             # unparseable-query
+    ("Unknown Studio 01.01.2020", True),   # scene-unresolved
+    (SEARCH_Q, False),                     # no-index
+])
+def test_ui_on_or_off_returns_identical_bytes(make_app, q, with_index):
+    from scenehound.observe import SessionStore
+    st = SessionStore(max_sessions=50, max_candidates=200)
+    plain = _get(make_app(with_index=with_index), q=q)
+    traced = _get(make_app(store=st, with_index=with_index), q=q)
+    assert plain.content == traced.content
+    assert st.snapshot()["sessions"][0]["candidates"]    # and it did record

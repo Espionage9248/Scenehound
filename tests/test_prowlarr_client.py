@@ -57,3 +57,17 @@ async def test_http_error_raises_prowlarr_error():
     async with hc:
         with pytest.raises(ProwlarrError):
             await client.search(12, "x", [6000])
+
+
+async def test_http_error_message_omits_the_api_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    hc = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = ProwlarrClient("http://p:9696", "SECRETPK", hc)
+    async with hc:
+        with pytest.raises(ProwlarrError) as exc_info:
+            await client.search(12, "x", [6000])
+    msg = str(exc_info.value)
+    assert "500" in msg
+    assert "SECRETPK" not in msg

@@ -59,6 +59,10 @@ td.num { text-align: right; white-space: nowrap; }
 .note { color: #d9bf6e; font-size: .84rem; }
 .muted { color: #8b93a1; }
 .ladder li { margin: .15rem 0; }
+.pt { margin-top: .8rem; border: 1px dashed #3a3f4a; border-radius: 6px; }
+.pt > summary { padding: .35rem .7rem; cursor: pointer; color: #9aa3b3; font-size: .85rem; }
+.pt > table { margin: 0 0 .3rem; }
+.pt-line { margin-top: .8rem; font-size: .85rem; }
 code { background: #101216; padding: .05rem .35rem; border-radius: 4px; font-size: .85em; }
 </style>
 </head>
@@ -121,8 +125,30 @@ const VETO_TEXT = {
   "foreign-title": "Rejected: the release's title names a different scene — the signals that do agree (studio, date, or performer) can't identify it without a matching title.",
   "superset-title": "Rejected: the release contains the whole scene title but adds words of its own — it names a longer-titled scene from the same studio.",
 };
+function closestLine(c) {
+  const sc = c.scene;
+  return sc
+    ? `Closest wanted scene: <b>${esc(sc.site)} — ${esc(sc.title)}</b> (${esc(sc.date)})`
+    : `<span class="muted">No wanted scene shares a date or name with this release.</span>`;
+}
+
+function verdict(c, threshold) {
+  const hit = c.confidence >= threshold;
+  if (!c.passed_through) return hit
+    ? `<b>${c.confidence}</b> ≥ threshold <b>${threshold}</b> → <b>matched</b>`
+    : `<b>${c.confidence}</b> &lt; threshold <b>${threshold}</b> → not matched`;
+  // Only a search passthrough can return a row that clears the threshold:
+  // RSS would have rewritten it.
+  return hit
+    ? `<span class="warn"><b>${c.confidence}</b> ≥ threshold <b>${threshold}</b> → would have matched, but this query path returns results unchanged</span>`
+    : `<b>${c.confidence}</b> &lt; threshold <b>${threshold}</b> → not rewritten, passed through unchanged`;
+}
+
 function whyLines(c, threshold) {
   const out = [];
+  if (c.passed_through) {
+    out.push(closestLine(c));
+  }
   if (c.veto) {
     out.push(`<span class="no">✗ ${esc(VETO_TEXT[c.veto] || "Rejected: " + c.veto)}</span>`);
     if (c.residual && c.residual.length)
@@ -141,10 +167,7 @@ function whyLines(c, threshold) {
     out.push(`Title is similar (+${c.detail.title.toFixed(1)})`);
   if (c.strong_signals.length === 1)
     out.push(`<span class="warn">⚠ Needs two strong signals to match — only one found, so confidence is capped at 65.</span>`);
-  const cmp = c.confidence >= threshold
-    ? `<b>${c.confidence}</b> ≥ threshold <b>${threshold}</b> → <b>matched</b>`
-    : `<b>${c.confidence}</b> &lt; threshold <b>${threshold}</b> → not matched`;
-  out.push(`Confidence ${cmp}`);
+  out.push(`Confidence ${verdict(c, threshold)}`);
   return out;
 }
 
@@ -174,9 +197,10 @@ function grabPills(o) {
 function badges(s) {
   const o = s.outcome;
   const g = grabPills(o);
+  // A grab must never hide that this card only passed items through.
+  if (s.kind === 'rss') return [...g, ['b-rss', `RSS: ${o.rewritten} rewritten of ${o.items_total}`]];
+  if (s.kind === 'passthrough') return [...g, ['b-pass', `Passthrough (${o.matched_count})`]];
   if (g.length) return g;
-  if (s.kind === 'rss') return [['b-rss', `RSS: ${o.rewritten} rewritten of ${o.items_total}`]];
-  if (s.kind === 'passthrough') return [['b-pass', `Passthrough (${o.matched_count})`]];
   if (o.status === 'error') return [['b-error', 'Error']];
   if (o.status === 'matched') return [['b-matched', `Matched (${o.matched_count})`]];
   return [['b-empty', 'No matches']];
@@ -214,34 +238,81 @@ function queryChain(s) {
   return h;
 }
 
-function candidates(s) {
-  if (!s.candidates.length) return s.kind === "search"
-    ? `<h3>Candidates</h3><div class="muted">Prowlarr returned nothing for any query variant.</div>` : "";
-  let h = `<h3>Candidates (${s.candidates.length}${
-    s.dropped_candidates ? ` shown, +${s.dropped_candidates} more dropped` : ""})</h3>`;
-  h += `<table><tr><th>Release title</th><th>Size</th><th>Seeders</th><th>Confidence</th><th></th></tr>`;
-  const recByGuid = {};
+const CAND_HEAD = `<tr><th>Release title</th><th>Size</th><th>Seeders</th><th>Confidence</th><th></th></tr>`;
+
+function grabsByGuid(s) {
+  const m = {};
   for (const rec of (s.outcome.grabs || []))
-    if (rec.grabbed_guid) recByGuid[rec.grabbed_guid] = rec;
-  for (const c of s.candidates) {
-    // Each grabbed row badges with ITS OWN grab's state.
-    const gb = recByGuid[c.guid] ? grabBadge(recByGuid[c.guid]) : null;
-    h += `<tr class="${c.matched ? "conf-hit" : ""}">` +
-      `<td>${esc(c.title)}${gb ? ` <span class="badge ${gb[0]}">${esc(gb[1])}</span>` : ""}${c.rewritten_title
-          ? `<div class="muted">→ returned as: ${esc(c.rewritten_title)}</div>` : ""}` +
-      `<div class="why">${whyLines(c, s.threshold).join("<br>")}</div></td>` +
-      `<td class="num">${fmtSize(c.size)}</td><td class="num">${c.seeders ?? ""}</td>` +
-      `<td class="num">${c.confidence} <span class="confbar" style="width:${c.confidence * 0.6}px"></span></td>` +
-      `<td>${c.matched ? "✓" : ""}</td></tr>`;
-  }
+    if (rec.grabbed_guid) m[rec.grabbed_guid] = rec;
+  return m;
+}
+
+function candidateRow(c, s, byGuid) {
+  // Each grabbed row badges with ITS OWN grab's state.
+  const gb = byGuid[c.guid] ? grabBadge(byGuid[c.guid]) : null;
+  return `<tr class="${c.matched ? "conf-hit" : ""}">` +
+    `<td>${esc(c.title)}${gb ? ` <span class="badge ${gb[0]}">${esc(gb[1])}</span>` : ""}${c.rewritten_title
+        ? `<div class="muted">→ returned as: ${esc(c.rewritten_title)}</div>` : ""}` +
+    `<div class="why">${whyLines(c, s.threshold).join("<br>")}</div></td>` +
+    `<td class="num">${fmtSize(c.size)}</td><td class="num">${c.seeders ?? ""}</td>` +
+    `<td class="num">${c.confidence} <span class="confbar" style="width:${c.confidence * 0.6}px"></span></td>` +
+    `<td>${c.matched ? "✓" : ""}</td></tr>`;
+}
+
+function candidates(s) {
+  // Passed-through rows render in their own collapsed block (passedThrough).
+  const own = s.candidates.filter(c => !c.passed_through);
+  if (!own.length) return s.kind === "search"
+    ? `<h3>Candidates</h3><div class="muted">Prowlarr returned nothing for any query variant.</div>` : "";
+  const byGuid = grabsByGuid(s);
+  // Only a search session's dropped rows are its own; the cap keeps matched
+  // rows, so an RSS or passthrough session only ever drops passed-through ones.
+  const dropped = s.kind === "search" ? s.dropped_candidates : 0;
+  let h = `<h3>Candidates (${own.length}${
+    dropped ? ` shown, +${dropped} more dropped` : ""})</h3>`;
+  h += `<table>${CAND_HEAD}`;
+  for (const c of own) h += candidateRow(c, s, byGuid);
   return h + `</table>`;
+}
+
+function passedThrough(s, open) {
+  const rows = s.candidates.filter(c => c.passed_through);
+  // The cap keeps matched rows first, so outside a search session every
+  // dropped row is a passed-through one: count it here, never as "later".
+  const dropped = s.kind === "search" ? 0 : (s.dropped_candidates || 0);
+  // Only RSS rows move: an RSS poll takes over the rows it re-lists from the
+  // slug's older polls. Pre-feature sessions count 0 and claim nothing.
+  const later = s.kind === "rss"
+    ? Math.max(0, (s.outcome.passed_through || 0) - rows.length - dropped) : 0;
+  if (!rows.length) return later
+    ? `<div class="muted pt-line">Passed through unchanged: all ${later} are listed under later polls.</div>` : "";
+  const byGuid = grabsByGuid(s);
+  // The block starts collapsed, so its summary carries any grab inside it.
+  const seen = new Set();
+  let grabbed = "";
+  for (const c of rows) {
+    if (!byGuid[c.guid]) continue;
+    const [cls, label] = grabBadge(byGuid[c.guid]);
+    if (seen.has(cls)) continue;
+    seen.add(cls);
+    grabbed += ` <span class="badge ${cls}">${esc(label)}</span>`;
+  }
+  const key = `${s.session_id}-pt`;
+  let h = `<details class="pt" data-key="${key}"${open.has(key) ? " open" : ""}>` +
+    `<summary>Passed through — not rewritten (${rows.length})` +
+    (later ? ` · ${later} more listed under later polls` : "") +
+    (dropped ? ` · +${dropped} more dropped` : "") +
+    `${grabbed}</summary><table>${CAND_HEAD}`;
+  for (const c of rows) h += candidateRow(c, s, byGuid);
+  return h + `</table></details>`;
 }
 
 function outcome(s) {
   const o = s.outcome;
   let h = `<h3>Outcome</h3><ul class="ladder">`;
   if (s.kind === "rss")
-    h += `<li>RSS sync: ${o.items_total} items from Prowlarr, ${o.rewritten} rewritten to canonical titles.</li>`;
+    h += `<li>RSS sync: ${o.items_total} items from Prowlarr, ${o.rewritten} rewritten to canonical titles` +
+      (o.passed_through ? `, ${o.passed_through} passed through unchanged` : "") + `.</li>`;
   else if (s.kind === "passthrough")
     h += `<li>Passed through: ${o.matched_count} result(s) returned to Whisparr unmodified.</li>`;
   else if (o.status === "error")
@@ -256,6 +327,8 @@ function outcome(s) {
     h += `<li>✓ Whisparr grabbed <code>${esc(rec.grab.release_title)}</code>` +
       (gc && gc.title !== rec.grab.release_title
         ? ` — candidate <code>${esc(gc.title)}</code>` : "") +
+      (gc && gc.passed_through
+        ? ` — passed through unchanged (Scenehound's best: ${gc.confidence}${gc.veto ? ", " + esc(gc.veto) : ""})` : "") +
       ` at ${fmtTime(rec.grab.at)}.</li>`;
     if (rec.imported)
       h += rec.imported.dry_run
@@ -266,7 +339,9 @@ function outcome(s) {
 }
 
 function render(data) {
-  const open = new Set([...document.querySelectorAll("details[open]")].map(d => d.dataset.sid));
+  // Cards and their nested passed-through blocks both keep their open state
+  // across the 4 s re-render, each by its own key.
+  const open = new Set([...document.querySelectorAll("details[open]")].map(d => d.dataset.key));
   const idx = data.index || {};
   $("indexinfo").textContent =
     `wanted index: ${idx.size} scenes` +
@@ -275,18 +350,18 @@ function render(data) {
     `<div class="card"><summary style="display:block;padding:.55rem .9rem">` +
     `<span class="badge b-grabbed">Grab</span> ` +
     `${u.grab.release_title ? `<code>${esc(u.grab.release_title)}</code>` : `download <code>${esc(u.grab.download_id)}</code>`}` +
-    ` <span class="muted">not correlated to a recorded search — ${fmtTime(u.grab.at)}</span>` +
+    ` <span class="muted">not correlated to any recorded search or RSS poll — ${fmtTime(u.grab.at)}</span>` +
     (u.imported ? ` <span class="badge ${u.imported.dry_run ? "b-dryrun" : "b-imported"}">${u.imported.dry_run ? "would import" : "imported"}</span>` : "") +
     `</summary></div>`).join("");
   $("sessions").innerHTML = (data.sessions || []).map(s => {
     const pills = badges(s).map(([cls, label]) =>
       `<span class="badge ${cls}">${esc(label)}</span>`).join(" ");
-    return `<details class="card" data-sid="${s.session_id}" ${open.has(String(s.session_id)) ? "open" : ""}>` +
+    return `<details class="card" data-key="${s.session_id}" ${open.has(String(s.session_id)) ? "open" : ""}>` +
       `<summary><span class="when">${fmtTime(s.started_at)}</span>` +
       `<span class="slug">${esc(s.slug)}</span>` +
       `<span class="ask">${esc(humanAsk(s))}</span>` +
       `${pills}</summary>` +
-      `<div class="body">${queryChain(s)}${candidates(s)}${outcome(s)}</div></details>`;
+      `<div class="body">${queryChain(s)}${candidates(s)}${passedThrough(s, open)}${outcome(s)}</div></details>`;
   }).join("") || `<p class="muted">No searches recorded yet. Trigger a search in Whisparr and it will appear here.</p>`;
 }
 

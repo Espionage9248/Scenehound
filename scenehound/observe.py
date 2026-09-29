@@ -29,7 +29,14 @@ _UNMATCHED_GRABS_MAX = 20
 # apikey-style query params inside GUIDs (which are sometimes URLs). Titles are
 # release names, never URLs, and are stored verbatim so grab correlation can
 # exact-match them.
-_SECRET_PARAM = re.compile(r"(?i)\b(apikey|api_key|passkey|token)=[^&\s]+")
+_SECRET_KEYS = r"apikey|api_key|passkey|token|authkey|torrent_pass"
+# authkey/torrent_pass: Gazelle trackers (empornium, happyfappy) put both in
+# the download URL that Prowlarr hands us as the guid.
+_SECRET_PARAM = re.compile(rf"(?i)\b({_SECRET_KEYS})=[^&\s]+")
+# A secret param whose value isn't REDACTED yet. load() runs this over the raw
+# JSON text, where _SECRET_PARAM's value class would run on past the closing
+# quote and make an already-scrubbed file look dirty on every restart.
+_UNREDACTED = re.compile(rf'(?i)\b(?:{_SECRET_KEYS})=(?!REDACTED\b)[^&\s"]')
 # The separator rewriter.rewrite_title puts before the original tracker title:
 # "<canonical> [<original>]". Duplicated here rather than imported to keep this
 # module's no-imports-from-the-pipeline isolation rule; if the rewriter's
@@ -40,6 +47,10 @@ _ORIGINAL_SUFFIX_SEP = " ["
 
 def _sanitize(text: str) -> str:
     return _SECRET_PARAM.sub(r"\1=REDACTED", text)
+
+
+def _sanitize_opt(text: str | None) -> str | None:
+    return _sanitize(text) if text else text
 
 
 def _shielded(fn):
@@ -80,7 +91,7 @@ class CandidateTrace:
     guid: str                        # sanitized; identity only, never displayed
     size: int | None
     seeders: int | None
-    scene_id: int                    # best-matching scene
+    scene_id: int | None             # best-matching scene; None = no wanted scene came close
     confidence: int
     strong_signals: tuple[str, ...]
     veto: str | None
@@ -92,6 +103,13 @@ class CandidateTrace:
     # visible — vetoed candidates never reach Whisparr, so /ui is the only
     # place a wrongly-rejected release can be seen.
     residual: tuple[str, ...] = ()
+    # Returned to Whisparr unmodified (RSS items below threshold, results of
+    # a search passthrough). Recorded so a Whisparr grab of one correlates to
+    # this session instead of landing in the unmatched strip.
+    passed_through: bool = False
+    # The closest wanted scene, on passed-through rows only: RSS and
+    # passthrough sessions carry no scene list for the UI to name it from.
+    scene: SceneRef | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +148,7 @@ class Outcome:
     matched_count: int = 0
     items_total: int = 0             # RSS only
     rewritten: int = 0               # RSS only
+    passed_through: int = 0          # items returned unchanged, counted at capture
     # One record per grab: several candidates of one session can each be
     # grabbed (and each import independently). Replaces the v0.2.0 single
     # grab/grabbed_guid/imported slots whose second grab overwrote the first.
@@ -187,13 +206,17 @@ def _variant(d: dict) -> VariantTrace:
 
 def _candidate(d: dict) -> CandidateTrace:
     return CandidateTrace(
-        title=d.get("title", ""), guid=d.get("guid", ""),
+        # Re-sanitized on the way in: files written before authkey and
+        # torrent_pass were redacted still carry them.
+        title=d.get("title", ""), guid=_sanitize(d.get("guid") or ""),
         size=d.get("size"), seeders=d.get("seeders"),
-        scene_id=d.get("scene_id", 0), confidence=d.get("confidence", 0),
+        scene_id=d.get("scene_id"), confidence=d.get("confidence", 0),
         strong_signals=tuple(d.get("strong_signals") or ()),
         veto=d.get("veto"), detail=dict(d.get("detail") or {}),
         matched=bool(d.get("matched")), rewritten_title=d.get("rewritten_title"),
         residual=tuple(d.get("residual") or ()),
+        passed_through=bool(d.get("passed_through")),
+        scene=_scene_ref(d["scene"]) if d.get("scene") else None,
     )
 
 
@@ -215,8 +238,11 @@ def _outcome(d: dict) -> Outcome:
     return Outcome(
         status=d.get("status", "empty"), matched_count=d.get("matched_count", 0),
         items_total=d.get("items_total", 0), rewritten=d.get("rewritten", 0),
+        passed_through=d.get("passed_through", 0),
         grabs=[GrabRecord(grab=_grab_event(g.get("grab") or {}),
-                          grabbed_guid=g.get("grabbed_guid"),
+                          # Scrubbed exactly like the candidate guid it points
+                          # at, so the correlation key still agrees.
+                          grabbed_guid=_sanitize_opt(g.get("grabbed_guid")),
                           imported=_import_event(g.get("imported")))
                for g in d.get("grabs") or ()],
     )
@@ -241,7 +267,9 @@ def _session(d: dict) -> SearchSession:
         dropped_candidates=d.get("dropped_candidates", 0),
         outcome=_outcome(d.get("outcome") or {}),
         fallback_reason=d.get("fallback_reason"),
-        notes=tuple(d.get("notes") or ()),
+        # Re-sanitized on the way in: files written before error text was
+        # scrubbed still carry a request URL, apikey included.
+        notes=tuple(_sanitize(n) for n in d.get("notes") or ()),
     )
 
 
@@ -273,6 +301,33 @@ class SessionStore:
     def add(self, session: SearchSession) -> None:
         self._dirty = True
         self._sessions.appendleft(session)
+        # Last, so a failure here (swallowed by the shield) still leaves the
+        # new session in the ring: the worst case is duplicate rows.
+        if session.kind == "rss":
+            self._prune_relisted(session)
+
+    def _prune_relisted(self, new: SearchSession) -> None:
+        """List each passed-through RSS item once, under the latest poll that
+        returned it. The newest poll per slug then always lists the whole
+        current feed, so any item Whisparr can grab from it correlates however
+        many polls it has sat there. A row a grab points at stays put so its
+        badge survives; rewritten rows are never touched."""
+        relisted = {c.guid for c in new.candidates if c.passed_through and c.guid}
+        if not relisted:
+            return
+        # By index: the loop replaces elements of the deque it walks.
+        for i in range(len(self._sessions)):
+            s = self._sessions[i]
+            if s is new or s.kind != "rss" or s.slug != new.slug:
+                continue
+            grabbed = {r.grabbed_guid for r in s.outcome.grabs if r.grabbed_guid}
+            kept = tuple(c for c in s.candidates
+                         if not (c.passed_through and c.guid in relisted
+                                 and c.guid not in grabbed))
+            if len(kept) != len(s.candidates):
+                # Outcome travels by reference: grabs stamped before (and
+                # imports stamped after) the trim stay on this session.
+                self._sessions[i] = dataclasses.replace(s, candidates=kept)
 
     @_shielded
     def save(self, path: Path) -> None:
@@ -296,7 +351,8 @@ class SessionStore:
         p = Path(path)
         if not p.exists():
             return
-        data = json.loads(p.read_text(encoding="utf-8"))
+        text = p.read_text(encoding="utf-8")
+        data = json.loads(text)
         sessions = []
         for d in data.get("sessions") or ():
             try:
@@ -317,7 +373,10 @@ class SessionStore:
                                       maxlen=_UNMATCHED_GRABS_MAX)
         # Never reissue an id a restored session already carries.
         self._next = max([data.get("next_id") or 0] + [s.session_id for s in sessions])
-        self._dirty = False
+        # The decoders scrubbed any unredacted secret from memory; flag the
+        # file so the next flush rewrites it too, instead of leaving the
+        # secrets on disk until a search happens to dirty the store.
+        self._dirty = _UNREDACTED.search(text) is not None
         log.info("ui state restored sessions=%d unmatched_grabs=%d from %s",
                  len(self._sessions), len(self._unmatched_grabs), p)
 
@@ -372,8 +431,9 @@ class SessionStore:
             if not matches:
                 continue
             guid = self._correlate_guid(matches, size)
-            log.info("grab correlated session=%d kind=%s slug=%s title=%r",
-                     s.session_id, s.kind, s.slug, release_title)
+            log.info("grab correlated session=%d kind=%s slug=%s passed_through=%s "
+                     "title=%r", s.session_id, s.kind, s.slug,
+                     any(c.passed_through for c in matches), release_title)
             if download_id:
                 # Webhook resend / re-grab of the same download: update the
                 # existing record in place (keeping any import stamp it
@@ -461,6 +521,7 @@ class Recorder:
         self._items_total = 0
         self._rewritten = 0
         self._passthrough_count: int | None = None
+        self._passed_count = 0
         self._committed = False
 
     @_shielded
@@ -485,7 +546,9 @@ class Recorder:
 
     @_shielded
     def note(self, text: str) -> None:
-        self._notes.append(text)
+        # Some notes are caller-supplied error text, which can embed a
+        # request URL, and URLs carry keys.
+        self._notes.append(_sanitize(text))
 
     @_shielded
     def scored(self, items) -> None:
@@ -514,15 +577,44 @@ class Recorder:
         self._passthrough_count = count
 
     @_shielded
+    def passed_through(self, items) -> None:
+        # items: iterable of (ReleaseCandidate, SceneFingerprint | None,
+        # MatchScore | None) returned to Whisparr unmodified. The scene and
+        # score are the CLOSEST wanted scene, kept so the UI can say why the
+        # item wasn't rewritten; None when nothing came close or nothing was
+        # scored. matched stays False even at/above threshold: it means
+        # "Scenehound rewrote it".
+        for cand, scene, ms in items:
+            self._cands.append(CandidateTrace(
+                title=cand.title,
+                guid=_sanitize(cand.guid),
+                size=cand.size,
+                seeders=cand.seeders,
+                scene_id=scene.scene_id if scene is not None else None,
+                confidence=ms.confidence if ms is not None else 0,
+                strong_signals=ms.strong_signals if ms is not None else (),
+                veto=ms.veto if ms is not None else None,
+                detail=dict(ms.detail) if ms is not None else {},
+                matched=False,
+                rewritten_title=None,
+                residual=ms.residual if ms is not None else (),
+                passed_through=True,
+                scene=SceneRef.from_scene(scene) if scene is not None else None,
+            ))
+            self._passed_count += 1
+
+    @_shielded
     def rss_summary(self, items_total: int, matched) -> None:
         self._kind = "rss"
         self._items_total = items_total
+        matched = list(matched)
         self.scored(matched)
-        self._rewritten = len(self._cands)
+        # Not len(self._cands): that now holds passed-through rows as well.
+        self._rewritten = len(matched)
 
     @_shielded
     def error(self, text: str) -> None:
-        self._error = text
+        self._error = _sanitize(text)
 
     @_shielded
     def commit(self) -> None:
@@ -571,7 +663,8 @@ class Recorder:
             candidates=tuple(cands),
             dropped_candidates=dropped,
             outcome=Outcome(status=status, matched_count=matched_count,
-                            items_total=self._items_total, rewritten=self._rewritten),
+                            items_total=self._items_total, rewritten=self._rewritten,
+                            passed_through=self._passed_count),
             fallback_reason=self._fallback,
             notes=tuple(notes),
         ))
@@ -587,6 +680,7 @@ class NullRecorder:
     def note(self, text) -> None: ...
     def scored(self, items) -> None: ...
     def passthrough_results(self, count) -> None: ...
+    def passed_through(self, items) -> None: ...
     def rss_summary(self, items_total, matched) -> None: ...
     def error(self, text) -> None: ...
     def commit(self) -> None: ...
