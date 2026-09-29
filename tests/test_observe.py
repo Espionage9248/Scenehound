@@ -233,6 +233,7 @@ def test_null_recorder_accepts_everything():
     NULL_RECORDER.note("n")
     NULL_RECORDER.scored([])
     NULL_RECORDER.passthrough_results(0)
+    NULL_RECORDER.passed_through([])
     NULL_RECORDER.rss_summary(0, [])
     NULL_RECORDER.error("e")
     NULL_RECORDER.commit()
@@ -773,3 +774,128 @@ def test_load_of_an_already_scrubbed_file_does_not_rewrite_it(tmp_path):
     path.unlink()
     restored.save(path)
     assert not path.exists()
+
+
+# ---- passed-through rows ----------------------------------------------------
+# Items Scenehound returned to Whisparr unchanged. Recorded so a Whisparr grab
+# of one correlates to its session instead of the unmatched strip.
+
+def test_recorder_records_passed_through_rows():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([
+        (_cand("g1", "Raw.Near.Miss"), SCENE, _ms(70, strong=("site", "performer"))),
+        (_cand(TRACKER_GUID, "Raw.Unrelated"), None, None),
+    ])
+    rec.rss_summary(2, [])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    near, unrelated = s["candidates"]          # confidence desc
+    assert near["passed_through"] is True
+    assert near["matched"] is False and near["rewritten_title"] is None
+    assert near["scene_id"] == 7 and near["confidence"] == 70
+    assert near["strong_signals"] == ["site", "performer"]
+    assert near["scene"]["title"] == "Latex Worship Session"
+    assert near["scene"]["date"] == "2026-07-07"
+    assert unrelated["passed_through"] is True
+    assert unrelated["scene_id"] is None and unrelated["scene"] is None
+    assert unrelated["confidence"] == 0 and unrelated["strong_signals"] == []
+    assert unrelated["veto"] is None and unrelated["detail"] == {}
+    assert unrelated["guid"] == REDACTED_GUID
+    assert s["outcome"]["passed_through"] == 2
+
+
+def test_passed_through_row_above_threshold_is_never_matched():
+    # A search passthrough result that WOULD clear the threshold is still
+    # returned unchanged: matched means "Scenehound rewrote it".
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "familytherapyxxx 26.07.26")
+    rec.fallback("unparseable-query")
+    rec.passthrough_results(1)
+    rec.passed_through([(_cand("g1"), SCENE, _ms(100))])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    c = s["candidates"][0]
+    assert c["confidence"] == 100
+    assert c["matched"] is False and c["passed_through"] is True
+    assert s["outcome"]["matched_count"] == 1     # passthrough: results returned
+    assert s["outcome"]["passed_through"] == 1
+
+
+def test_rss_summary_counts_only_rewritten_rows():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("p1", "Raw.1"), None, None),
+                        (_cand("p2", "Raw.2"), None, None)])
+    rec.rss_summary(3, [(_cand("g1"), SCENE, _ms(90), "rewritten")])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["rewritten"] == 1
+    assert s["outcome"]["items_total"] == 3
+    assert s["outcome"]["passed_through"] == 2
+    assert len(s["candidates"]) == 3
+
+
+def test_record_grab_correlates_a_passed_through_title():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("p1", "[Bellesa House] - Raw Tracker Title - 2023-06-22"),
+                         None, None)])
+    rec.rss_summary(1, [])
+    rec.commit()
+
+    store.record_grab("[Bellesa House] - Raw Tracker Title - 2023-06-22", "HASH1", 1000)
+    snap = store.snapshot()
+    assert snap["sessions"][0]["outcome"]["grabs"][0]["grabbed_guid"] == "p1"
+    assert snap["unmatched_grabs"] == []
+
+
+def test_duplicate_item_in_one_poll_still_correlates_to_the_session():
+    # Review focus 1: the same release twice in one RSS response. The tie is
+    # ambiguous (same title, same size), so no row badge -- but the grab must
+    # still land on the session, never in the unmatched strip.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("p1", "Raw.Dup"), None, None),
+                        (_cand("p1", "Raw.Dup"), None, None)])
+    rec.rss_summary(2, [])
+    rec.commit()
+
+    store.record_grab("Raw.Dup", "HASH1", 1000)
+    snap = store.snapshot()
+    assert len(snap["sessions"][0]["outcome"]["grabs"]) == 1
+    assert snap["unmatched_grabs"] == []
+
+
+def test_load_decodes_pre_feature_rows_with_defaults(tmp_path):
+    # Review focus 3: a v0.6.1 file has none of the new keys.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    store.add(make_session(store, candidates=[make_candidate()]))
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+    data = json.loads(path.read_text())
+    cand = data["sessions"][0]["candidates"][0]
+    for key in ("scene_id", "passed_through", "scene"):
+        del cand[key]
+    del data["sessions"][0]["outcome"]["passed_through"]
+    path.write_text(json.dumps(data))
+
+    s = _restore(path).snapshot()["sessions"][0]
+    c = s["candidates"][0]
+    assert c["scene_id"] is None
+    assert c["passed_through"] is False
+    assert c["scene"] is None
+    assert s["outcome"]["passed_through"] == 0
+
+
+def test_passed_through_rows_round_trip(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand("g1", "Raw.Near"), SCENE, _ms(70, strong=("site",))),
+                        (_cand("g2", "Raw.None"), None, None)])
+    rec.rss_summary(2, [])
+    rec.commit()
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    assert _restore(path).snapshot() == store.snapshot()

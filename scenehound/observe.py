@@ -91,7 +91,7 @@ class CandidateTrace:
     guid: str                        # sanitized; identity only, never displayed
     size: int | None
     seeders: int | None
-    scene_id: int                    # best-matching scene
+    scene_id: int | None             # best-matching scene; None = no wanted scene came close
     confidence: int
     strong_signals: tuple[str, ...]
     veto: str | None
@@ -103,6 +103,13 @@ class CandidateTrace:
     # visible — vetoed candidates never reach Whisparr, so /ui is the only
     # place a wrongly-rejected release can be seen.
     residual: tuple[str, ...] = ()
+    # Returned to Whisparr unmodified (RSS items below threshold, results of
+    # a search passthrough). Recorded so a Whisparr grab of one correlates to
+    # this session instead of landing in the unmatched strip.
+    passed_through: bool = False
+    # The closest wanted scene, on passed-through rows only: RSS and
+    # passthrough sessions carry no scene list for the UI to name it from.
+    scene: SceneRef | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +148,7 @@ class Outcome:
     matched_count: int = 0
     items_total: int = 0             # RSS only
     rewritten: int = 0               # RSS only
+    passed_through: int = 0          # items returned unchanged, counted at capture
     # One record per grab: several candidates of one session can each be
     # grabbed (and each import independently). Replaces the v0.2.0 single
     # grab/grabbed_guid/imported slots whose second grab overwrote the first.
@@ -202,11 +210,13 @@ def _candidate(d: dict) -> CandidateTrace:
         # torrent_pass were redacted still carry them.
         title=d.get("title", ""), guid=_sanitize(d.get("guid") or ""),
         size=d.get("size"), seeders=d.get("seeders"),
-        scene_id=d.get("scene_id", 0), confidence=d.get("confidence", 0),
+        scene_id=d.get("scene_id"), confidence=d.get("confidence", 0),
         strong_signals=tuple(d.get("strong_signals") or ()),
         veto=d.get("veto"), detail=dict(d.get("detail") or {}),
         matched=bool(d.get("matched")), rewritten_title=d.get("rewritten_title"),
         residual=tuple(d.get("residual") or ()),
+        passed_through=bool(d.get("passed_through")),
+        scene=_scene_ref(d["scene"]) if d.get("scene") else None,
     )
 
 
@@ -228,6 +238,7 @@ def _outcome(d: dict) -> Outcome:
     return Outcome(
         status=d.get("status", "empty"), matched_count=d.get("matched_count", 0),
         items_total=d.get("items_total", 0), rewritten=d.get("rewritten", 0),
+        passed_through=d.get("passed_through", 0),
         grabs=[GrabRecord(grab=_grab_event(g.get("grab") or {}),
                           # Scrubbed exactly like the candidate guid it points
                           # at, so the correlation key still agrees.
@@ -391,8 +402,9 @@ class SessionStore:
             if not matches:
                 continue
             guid = self._correlate_guid(matches, size)
-            log.info("grab correlated session=%d kind=%s slug=%s title=%r",
-                     s.session_id, s.kind, s.slug, release_title)
+            log.info("grab correlated session=%d kind=%s slug=%s passed_through=%s "
+                     "title=%r", s.session_id, s.kind, s.slug,
+                     any(c.passed_through for c in matches), release_title)
             if download_id:
                 # Webhook resend / re-grab of the same download: update the
                 # existing record in place (keeping any import stamp it
@@ -480,6 +492,7 @@ class Recorder:
         self._items_total = 0
         self._rewritten = 0
         self._passthrough_count: int | None = None
+        self._passed_count = 0
         self._committed = False
 
     @_shielded
@@ -533,11 +546,40 @@ class Recorder:
         self._passthrough_count = count
 
     @_shielded
+    def passed_through(self, items) -> None:
+        # items: iterable of (ReleaseCandidate, SceneFingerprint | None,
+        # MatchScore | None) returned to Whisparr unmodified. The scene and
+        # score are the CLOSEST wanted scene, kept so the UI can say why the
+        # item wasn't rewritten; None when nothing came close or nothing was
+        # scored. matched stays False even at/above threshold: it means
+        # "Scenehound rewrote it".
+        for cand, scene, ms in items:
+            self._cands.append(CandidateTrace(
+                title=cand.title,
+                guid=_sanitize(cand.guid),
+                size=cand.size,
+                seeders=cand.seeders,
+                scene_id=scene.scene_id if scene is not None else None,
+                confidence=ms.confidence if ms is not None else 0,
+                strong_signals=ms.strong_signals if ms is not None else (),
+                veto=ms.veto if ms is not None else None,
+                detail=dict(ms.detail) if ms is not None else {},
+                matched=False,
+                rewritten_title=None,
+                residual=ms.residual if ms is not None else (),
+                passed_through=True,
+                scene=SceneRef.from_scene(scene) if scene is not None else None,
+            ))
+            self._passed_count += 1
+
+    @_shielded
     def rss_summary(self, items_total: int, matched) -> None:
         self._kind = "rss"
         self._items_total = items_total
+        matched = list(matched)
         self.scored(matched)
-        self._rewritten = len(self._cands)
+        # Not len(self._cands): that now holds passed-through rows as well.
+        self._rewritten = len(matched)
 
     @_shielded
     def error(self, text: str) -> None:
@@ -590,7 +632,8 @@ class Recorder:
             candidates=tuple(cands),
             dropped_candidates=dropped,
             outcome=Outcome(status=status, matched_count=matched_count,
-                            items_total=self._items_total, rewritten=self._rewritten),
+                            items_total=self._items_total, rewritten=self._rewritten,
+                            passed_through=self._passed_count),
             fallback_reason=self._fallback,
             notes=tuple(notes),
         ))
@@ -606,6 +649,7 @@ class NullRecorder:
     def note(self, text) -> None: ...
     def scored(self, items) -> None: ...
     def passthrough_results(self, count) -> None: ...
+    def passed_through(self, items) -> None: ...
     def rss_summary(self, items_total, matched) -> None: ...
     def error(self, text) -> None: ...
     def commit(self) -> None: ...
