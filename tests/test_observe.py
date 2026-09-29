@@ -899,3 +899,110 @@ def test_passed_through_rows_round_trip(tmp_path):
     store.save(path)
 
     assert _restore(path).snapshot() == store.snapshot()
+
+
+# ---- one row per passed-through RSS item -----------------------------------
+# The same feed items come back on every poll (HappyFappy's 25 span ~87 h).
+# Each passed-through item is listed once, under the latest poll that
+# returned it, so the newest poll per slug always lists the whole feed.
+
+def _rss_poll(store, guids, *, slug="empornium", rewritten=()):
+    rec = store.recorder(slug, 75, "")
+    rec.passed_through([(_cand(g, f"Raw.{g}"), None, None) for g in guids])
+    rec.rss_summary(len(guids) + len(rewritten),
+                    [(_cand(g, f"Rel.{g}"), SCENE, _ms(90), f"Rewritten {g}")
+                     for g in rewritten])
+    rec.commit()
+
+
+def _rows(store):
+    """{session_id: [guid, ...]} in stored order."""
+    return {s["session_id"]: [c["guid"] for c in s["candidates"]]
+            for s in store.snapshot()["sessions"]}
+
+
+def test_rss_poll_moves_relisted_rows_to_the_newest_poll():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b", "c"])
+    _rss_poll(store, ["b", "c", "d"])
+    assert _rows(store) == {2: ["b", "c", "d"], 1: ["a"]}
+    older = store.snapshot()["sessions"][1]
+    assert older["outcome"]["passed_through"] == 3   # capture-time count survives
+
+
+def test_pruning_keeps_a_grabbed_row_through_later_polls():
+    # Review focus 4.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b"])
+    store.record_grab("Raw.a", "HASH1", 1000)        # lands on poll 1
+    _rss_poll(store, ["a", "b"])
+    _rss_poll(store, ["a", "b"])
+    assert _rows(store) == {3: ["a", "b"], 2: [], 1: ["a"]}
+    first = store.snapshot()["sessions"][2]
+    assert first["outcome"]["grabs"][0]["grabbed_guid"] == "a"
+
+    store.record_grab("Raw.a", "HASH2", 1000)        # a second grab: newest poll
+    newest = store.snapshot()["sessions"][0]
+    assert newest["outcome"]["grabs"][0]["grab"]["download_id"] == "HASH2"
+
+
+def test_pruning_never_touches_rewritten_rows():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a"], rewritten=["r"])
+    _rss_poll(store, ["a", "r"])       # r's scene left the wanted list
+    assert _rows(store)[1] == ["r"]
+
+
+def test_pruning_is_per_slug_and_rss_only():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "familytherapyxxx 26.07.26")
+    rec.fallback("unparseable-query")
+    rec.passthrough_results(1)
+    rec.passed_through([(_cand("a", "Raw.a"), None, None)])
+    rec.commit()                                   # 1: search passthrough
+    _rss_poll(store, ["a"], slug="happyfappy")     # 2: other slug
+    _rss_poll(store, ["a"], slug="empornium")      # 3: prunes nothing above
+    assert _rows(store) == {3: ["a"], 2: ["a"], 1: ["a"]}
+
+
+def test_an_empty_guid_never_prunes():
+    # Review focus 5.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, [""])
+    _rss_poll(store, [""])
+    assert _rows(store) == {2: [""], 1: [""]}
+
+
+def test_pruning_carries_the_outcome_by_reference():
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b"])
+    store.record_grab("Raw.a", "HASH1", 1000)
+    _rss_poll(store, ["b"])                        # trims poll 1 (drops b)
+    store.record_import("HASH1", movie_id=7, file_count=1, dry_run=False)
+    first = store.snapshot()["sessions"][1]
+    assert first["outcome"]["grabs"][0]["imported"]["movie_id"] == 7
+
+
+def test_a_pruning_failure_still_keeps_the_new_session(monkeypatch, caplog):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a"])
+
+    def boom(new):
+        raise RuntimeError("prune exploded")
+
+    monkeypatch.setattr(store, "_prune_relisted", boom)
+    _rss_poll(store, ["a"])
+    assert _rows(store) == {2: ["a"], 1: ["a"]}    # duplicates, nothing lost
+    assert "failed (ignored)" in caplog.text
+
+
+def test_restored_sessions_are_pruned_by_the_next_poll(tmp_path):
+    # Review focus 2: a restart between polls.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    _rss_poll(store, ["a", "b"])
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    restored = _restore(path)
+    _rss_poll(restored, ["b"])
+    assert _rows(restored) == {2: ["b"], 1: ["a"]}

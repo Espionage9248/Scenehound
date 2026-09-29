@@ -299,6 +299,33 @@ class SessionStore:
     def add(self, session: SearchSession) -> None:
         self._dirty = True
         self._sessions.appendleft(session)
+        # Last, so a failure here (swallowed by the shield) still leaves the
+        # new session in the ring: the worst case is duplicate rows.
+        if session.kind == "rss":
+            self._prune_relisted(session)
+
+    def _prune_relisted(self, new: SearchSession) -> None:
+        """List each passed-through RSS item once, under the latest poll that
+        returned it. The newest poll per slug then always lists the whole
+        current feed, so any item Whisparr can grab from it correlates however
+        many polls it has sat there. A row a grab points at stays put so its
+        badge survives; rewritten rows are never touched."""
+        relisted = {c.guid for c in new.candidates if c.passed_through and c.guid}
+        if not relisted:
+            return
+        # By index: the loop replaces elements of the deque it walks.
+        for i in range(len(self._sessions)):
+            s = self._sessions[i]
+            if s is new or s.kind != "rss" or s.slug != new.slug:
+                continue
+            grabbed = {r.grabbed_guid for r in s.outcome.grabs if r.grabbed_guid}
+            kept = tuple(c for c in s.candidates
+                         if not (c.passed_through and c.guid in relisted
+                                 and c.guid not in grabbed))
+            if len(kept) != len(s.candidates):
+                # Outcome travels by reference: grabs stamped before (and
+                # imports stamped after) the trim stay on this session.
+                self._sessions[i] = dataclasses.replace(s, candidates=kept)
 
     @_shielded
     def save(self, path: Path) -> None:
