@@ -127,7 +127,11 @@ Torznab endpoints) that makes each search legible:
   pills such as **Imported ×2**.
   A release that contains the whole scene title but adds words of its own is
   rejected as a longer-titled scene of the same studio, and the UI names the
-  words it could not explain.
+  words it could not explain. Releases Scenehound returns to Whisparr
+  unchanged — RSS items it didn't rewrite, and the results of searches it
+  couldn't parse — are listed in a collapsed **Passed through** block with the
+  closest wanted scene and why it fell short, and are badged there when
+  Whisparr grabs one.
 - **Outcome** — Success/Failure at a glance, upgraded to **Grabbed** when
   Whisparr grabs a result and **Imported** when the import-completer lands it.
 

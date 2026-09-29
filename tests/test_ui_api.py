@@ -72,5 +72,7 @@ def test_ui_page_has_app_markers():
     r = TestClient(_app()).get("/ui")
     for marker in ('id="sessions"', 'id="keyform"', 'id="indexinfo"',
                    "scenehound_apikey", "/ui/api/sessions", "grabbed_guid",
-                   "grabPills", "o.grabs"):
+                   "grabPills", "o.grabs", "passedThrough", "c.passed_through",
+                   "o.passed_through", "dataset.key",
+                   "not correlated to any recorded search or RSS poll"):
         assert marker in r.text, marker
