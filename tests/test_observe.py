@@ -883,6 +883,19 @@ def test_rss_summary_counts_only_rewritten_rows():
     assert len(s["candidates"]) == 3
 
 
+def test_passed_through_count_includes_rows_the_cap_dropped():
+    # The UI's "listed under later polls" arithmetic relies on this: the count
+    # is taken at capture, before the cap, and dropped rows are reported apart.
+    store = SessionStore(max_sessions=10, max_candidates=1)
+    rec = store.recorder("empornium", 75, "")
+    rec.passed_through([(_cand(g, f"Raw.{g}"), None, None) for g in ("a", "b", "c")])
+    rec.rss_summary(3, [])
+    rec.commit()
+    s = store.snapshot()["sessions"][0]
+    assert s["outcome"]["passed_through"] == 3
+    assert len(s["candidates"]) == 1 and s["dropped_candidates"] == 2
+
+
 def test_record_grab_correlates_a_passed_through_title():
     store = SessionStore(max_sessions=10, max_candidates=200)
     rec = store.recorder("empornium", 75, "")
