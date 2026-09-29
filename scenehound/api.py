@@ -68,6 +68,48 @@ class _Scored:
         return self.score.confidence
 
 
+def _best_scene(
+    index: WantedIndex, title: str, threshold: int, skew: int
+) -> tuple[SceneFingerprint, MatchScore] | None:
+    """The scene to rewrite `title` to, else the closest wanted scene.
+
+    At/above threshold: highest confidence, FIRST on ties (candidates come back
+    ascending by scene_id) -- the RSS rewrite rule, unchanged. Below it: highest
+    confidence, then most strong signals (vetoes zero the confidence, so this
+    tells a vetoed near-miss from an unrelated scene), then first. None when no
+    wanted scene shares a date or name token with the title.
+    """
+    hit: tuple[SceneFingerprint, MatchScore] | None = None
+    near: tuple[SceneFingerprint, MatchScore] | None = None
+    for scene in index.candidates_for_title(title):
+        s = score(scene, title, other_sites=index.other_sites_for(scene),
+                  date_skew_days=skew)
+        if s.confidence >= threshold:
+            if hit is None or s.confidence > hit[1].confidence:
+                hit = (scene, s)
+        elif near is None or (s.confidence, len(s.strong_signals)) > (
+                near[1].confidence, len(near[1].strong_signals)):
+            near = (scene, s)
+    return hit or near
+
+
+def _record_passthrough(state: AppState, results: list[ReleaseCandidate], rec) -> None:
+    """Score passthrough results for the UI only. The response never depends
+    on this, so any failure is logged and the rows skipped, never raised."""
+    try:
+        index = state.index_holder.current
+        threshold = state.config.matching.threshold
+        skew = state.config.matching.date_skew_days
+        rows = []
+        for c in results:
+            best = (_best_scene(index, c.title, threshold, skew)
+                    if index is not None else None)
+            rows.append((c, *best) if best is not None else (c, None, None))
+        rec.passed_through(rows)
+    except Exception:
+        log.exception("passthrough scoring for the UI failed (ignored)")
+
+
 async def _passthrough(
     state: AppState, indexer: IndexerConfig, query: str, cats: tuple[int, ...], rec
 ) -> Response:
@@ -79,6 +121,10 @@ async def _passthrough(
         return _xml(build_feed([]))
     results = await state.prowlarr.search(indexer.prowlarr_id, query, cats)
     rec.passthrough_results(len(results))
+    # Recorded so a Whisparr grab of one correlates. Scoring is new work on
+    # this path, so it only runs when there is a UI to show it.
+    if state.store is not None:
+        _record_passthrough(state, results, rec)
     log.info("search slug=%s mode=passthrough q=%r results=%d",
              indexer.slug, query, len(results))
     return _xml(build_feed([FeedEntry(c) for c in results]))
@@ -168,38 +214,35 @@ async def _rss_mode(
     # One fetch, identical cost to status-quo RSS sync: not bucket-gated.
     candidates = await state.prowlarr.search(indexer.prowlarr_id, None, cats)
     index = state.index_holder.current
+    threshold = state.config.matching.threshold
     skew = state.config.matching.date_skew_days
     suffix = state.config.naming.original_title_suffix
     entries: list[FeedEntry] = []
-    rewritten = 0
     rss_matched: list[tuple] = []
+    passed: list[tuple] = []
     for c in candidates:
-        entry = FeedEntry(c)
-        if index is not None:
-            # Score ALL candidate scenes and rewrite to the BEST (highest-
-            # confidence) scene at or above threshold, not the first one that
-            # clears it (candidates come back ascending by scene_id).
-            best_scene: SceneFingerprint | None = None
-            best_ms: MatchScore | None = None
-            for scene in index.candidates_for_title(c.title):
-                s = score(scene, c.title, other_sites=index.other_sites_for(scene),
-                          date_skew_days=skew)
-                if s.confidence >= state.config.matching.threshold and (
-                        best_ms is None or s.confidence > best_ms.confidence):
-                    best_ms = s
-                    best_scene = scene
-            if best_scene is not None and best_ms is not None:
-                new_title = rewrite_title(best_scene, c.title, include_original=suffix)
-                entry = FeedEntry(c, title_override=new_title)
-                rewritten += 1
-                rss_matched.append((c, best_scene, best_ms, new_title))
-                log.info(
-                    "rss slug=%s matched scene=%d conf=%d original=%r",
-                    indexer.slug, best_scene.scene_id, best_ms.confidence, c.title,
-                )
-        entries.append(entry)
+        best = (_best_scene(index, c.title, threshold, skew)
+                if index is not None else None)
+        if best is not None and best[1].confidence >= threshold:
+            scene, ms = best
+            new_title = rewrite_title(scene, c.title, include_original=suffix)
+            entries.append(FeedEntry(c, title_override=new_title))
+            rss_matched.append((c, scene, ms, new_title))
+            log.info(
+                "rss slug=%s matched scene=%d conf=%d original=%r",
+                indexer.slug, scene.scene_id, ms.confidence, c.title,
+            )
+        else:
+            # Returned unchanged; recorded with its closest wanted scene so a
+            # Whisparr grab of it correlates and shows why it wasn't rewritten.
+            entries.append(FeedEntry(c))
+            passed.append((c, *best) if best is not None else (c, None, None))
+    if index is None:
+        rec.note("wanted list not loaded — items passed through unscored")
+    rec.passed_through(passed)
     rec.rss_summary(len(candidates), rss_matched)
-    log.info("rss slug=%s items=%d rewritten=%d", indexer.slug, len(candidates), rewritten)
+    log.info("rss slug=%s items=%d rewritten=%d",
+             indexer.slug, len(candidates), len(rss_matched))
     return _xml(build_feed(entries))
 
 
