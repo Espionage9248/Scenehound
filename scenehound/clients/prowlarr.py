@@ -23,6 +23,10 @@ class ProwlarrClient:
         self._api_key = api_key
         self._client = client
 
+    def _redact(self, text: str) -> str:
+        # Guarded: replacing "" would splice REDACTED between every character.
+        return text.replace(self._api_key, "REDACTED") if self._api_key else text
+
     async def search(
         self,
         indexer_id: int,
@@ -44,7 +48,9 @@ class ProwlarrClient:
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ProwlarrError(f"prowlarr search failed: {exc}") from exc
+            # httpx puts the request URL, apikey included, in its message; this
+            # text reaches the log, the UI's state file and Whisparr.
+            raise ProwlarrError(f"prowlarr search failed: {self._redact(str(exc))}") from exc
         try:
             return parse_feed(resp.content)
         except Exception as exc:  # malformed XML from upstream

@@ -317,6 +317,13 @@ def test_prowlarr_error_records_error(make_app, store):
     assert any("prowlarr" in n.lower() for n in s["notes"])
 
 
+def test_prowlarr_error_never_exposes_the_prowlarr_key(make_app, store):
+    app = make_app(store=store, status=500)
+    r = _get(app, q=SEARCH_Q)
+    assert b"apikey=pk" not in r.content
+    assert "apikey=pk" not in json.dumps(store.snapshot())
+
+
 def test_no_store_means_no_capture_and_identical_bytes(make_app):
     from scenehound.observe import SessionStore
     st = SessionStore(max_sessions=50, max_candidates=200)

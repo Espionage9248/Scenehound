@@ -267,7 +267,9 @@ def _session(d: dict) -> SearchSession:
         dropped_candidates=d.get("dropped_candidates", 0),
         outcome=_outcome(d.get("outcome") or {}),
         fallback_reason=d.get("fallback_reason"),
-        notes=tuple(d.get("notes") or ()),
+        # Re-sanitized on the way in: files written before error text was
+        # scrubbed still carry a request URL, apikey included.
+        notes=tuple(_sanitize(n) for n in d.get("notes") or ()),
     )
 
 
@@ -544,7 +546,9 @@ class Recorder:
 
     @_shielded
     def note(self, text: str) -> None:
-        self._notes.append(text)
+        # Some notes are caller-supplied error text, which can embed a
+        # request URL, and URLs carry keys.
+        self._notes.append(_sanitize(text))
 
     @_shielded
     def scored(self, items) -> None:
@@ -610,7 +614,7 @@ class Recorder:
 
     @_shielded
     def error(self, text: str) -> None:
-        self._error = text
+        self._error = _sanitize(text)
 
     @_shielded
     def commit(self) -> None:

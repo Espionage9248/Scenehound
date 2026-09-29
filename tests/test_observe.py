@@ -712,6 +712,22 @@ def test_recorder_redacts_tracker_authkey_and_torrent_pass():
     assert "PASS456" not in json.dumps(snap)
 
 
+def test_notes_and_errors_are_sanitized():
+    # httpx puts the request URL, apikey included, in its error message; that
+    # text reaches note() and error() verbatim and must not survive into the
+    # stored session.
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "q")
+    text = "url 'http://p:9696/12/api?t=search&apikey=SECRETPK&q=x'"
+    rec.note(text)
+    rec.error(text)
+    rec.commit()
+    snap = store.snapshot()
+    assert "SECRETPK" not in json.dumps(snap)
+    notes = snap["sessions"][0]["notes"]
+    assert any("apikey=REDACTED" in n for n in notes)
+
+
 def _write_unredacted_state(path):
     # A v0.6.1 file: add() stores what it's given, so building the session by
     # hand reproduces the unredacted guid and grabbed_guid an old build wrote.
@@ -748,6 +764,37 @@ def test_load_scrubbed_state_still_correlates_a_new_grab(tmp_path):
     grabs = restored.snapshot()["sessions"][0]["outcome"]["grabs"]
     assert [g["grabbed_guid"] for g in grabs] == [REDACTED_GUID, REDACTED_GUID]
     assert restored.snapshot()["unmatched_grabs"] == []
+
+
+def test_load_scrubs_secrets_from_stored_notes(tmp_path):
+    store = SessionStore(max_sessions=10, max_candidates=200)
+    rec = store.recorder("empornium", 75, "q")
+    rec.note("placeholder")
+    rec.commit()
+    path = tmp_path / "ui-sessions.json"
+    store.save(path)
+
+    # A pre-fix file: put the raw, unredacted note back. The store now
+    # sanitizes notes on the way in, so this reproduces what an older build
+    # (before error text was sanitized) left on disk.
+    data = json.loads(path.read_text())
+    data["sessions"][0]["notes"] = [
+        "prowlarr search failed: url 'http://p:9696/12/api?apikey=SECRETPK&q=x'"
+    ]
+    path.write_text(json.dumps(data))
+
+    restored = _restore(path)
+    notes = restored.snapshot()["sessions"][0]["notes"]
+    assert "SECRETPK" not in json.dumps(notes)
+    assert any("apikey=REDACTED" in n for n in notes)
+
+    restored.save(path)
+    assert "SECRETPK" not in path.read_text()
+
+    restored2 = _restore(path)
+    path.unlink()
+    restored2.save(path)
+    assert not path.exists()
 
 
 def test_load_of_a_clean_file_does_not_rewrite_it(tmp_path):
